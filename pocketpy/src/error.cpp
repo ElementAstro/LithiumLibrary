@@ -2,18 +2,17 @@
 
 namespace pkpy{
 
-    SourceData::SourceData(const Str& source, const Str& filename, CompileMode mode): filename(filename), mode(mode) {
+    SourceData::SourceData(std::string_view source, const Str& filename, CompileMode mode): filename(filename), mode(mode) {
         int index = 0;
         // Skip utf8 BOM if there is any.
-        if (strncmp(source.begin(), "\xEF\xBB\xBF", 3) == 0) index += 3;
+        if (strncmp(source.data(), "\xEF\xBB\xBF", 3) == 0) index += 3;
         // Drop all '\r'
-        SStream ss;
-        while(index < source.length()){
+        SStream ss(source.size() + 1);
+        while(index < source.size()){
             if(source[index] != '\r') ss << source[index];
             index++;
         }
-        this->source = ss.str().str();
-        
+        this->source = ss.str();
         line_starts.push_back(this->source.c_str());
     }
 
@@ -27,8 +26,8 @@ namespace pkpy{
         if(lineno < 0) lineno = 0;
         const char* _start = line_starts.at(lineno);
         const char* i = _start;
-        // max 200 chars
-        while(*i != '\n' && *i != '\0' && i-_start < 200) i++;
+        // max 300 chars
+        while(*i != '\n' && *i != '\0' && i-_start < 300) i++;
         return {_start, i};
     }
 

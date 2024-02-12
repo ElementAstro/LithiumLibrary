@@ -155,7 +155,7 @@ namespace pkpy{
         return false;
     }
 
-    PyObject* VM::exec(Str source, Str filename, CompileMode mode, PyObject* _module){
+    PyObject* VM::exec(std::string_view source, Str filename, CompileMode mode, PyObject* _module){
         if(_module == nullptr) _module = _main;
         try {
             CodeObject_ code = compile(source, filename, mode);
@@ -164,21 +164,20 @@ namespace pkpy{
 #endif
             return _exec(code, _module);
         }catch (const Exception& e){
-            Str sum = e.summary() + "\n";
-            _stderr(sum.data, sum.size);
+            stderr_write(e.summary() + "\n");
         }
 #if !PK_DEBUG_FULL_EXCEPTION
         catch(const std::exception& e) {
             Str msg = "An std::exception occurred! It could be a bug.\n";
             msg = msg + e.what() + "\n";
-            _stderr(msg.data, msg.size);
+            stderr_write(msg);
         }
         catch(NeedMoreLines){
             throw;
         }
         catch(...) {
             Str msg = "An unknown exception occurred! It could be a bug. Please report it to @blueloveTH on GitHub.\n";
-            _stderr(msg.data, msg.size);
+            stderr_write(msg);
         }
 #endif
         callstack.clear();
@@ -186,11 +185,11 @@ namespace pkpy{
         return nullptr;
     }
 
-    PyObject* VM::exec(Str source){
+    PyObject* VM::exec(std::string_view source){
         return exec(source, "main.py", EXEC_MODE);
     }
 
-    PyObject* VM::eval(Str source){
+    PyObject* VM::eval(std::string_view source){
         return exec(source, "<eval>", EVAL_MODE);
     }
 
@@ -243,7 +242,6 @@ namespace pkpy{
         return false;
     }
 
-
     int VM::normalized_index(int index, int size){
         if(index < 0) index += size;
         if(index < 0 || index >= size){
@@ -256,6 +254,17 @@ namespace pkpy{
         const PyTypeInfo* ti = _inst_type_info(obj);
         if(ti->m__next__) return ti->m__next__(this, obj);
         return call_method(obj, __next__);
+    }
+
+    bool VM::py_callable(PyObject* obj){
+        Type cls = vm->_tp(obj);
+        switch(cls.index){
+            case VM::tp_function.index: return vm->True;
+            case VM::tp_native_func.index: return vm->True;
+            case VM::tp_bound_method.index: return vm->True;
+            case VM::tp_type.index: return vm->True;
+        }
+        return vm->find_name_in_mro(cls, __call__) != nullptr;
     }
 
     PyObject* VM::py_import(Str path, bool throw_err){

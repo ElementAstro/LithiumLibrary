@@ -10,6 +10,7 @@
 #include "str.h"
 #include "tuplelist.h"
 #include "dict.h"
+#include "profiler.h"
 
 namespace pkpy{
 
@@ -150,9 +151,9 @@ public:
     // cached code objects for FSTRING_EVAL
     std::map<std::string_view, CodeObject_> _cached_codes;
 
-#if PK_ENABLE_CEVAL_CALLBACK
     void (*_ceval_on_step)(VM*, Frame*, Bytecode bc) = nullptr;
-#endif
+
+    LineProfiler* _profiler = nullptr;
 
     PrintFunc _stdout;
     PrintFunc _stderr;
@@ -186,9 +187,11 @@ public:
     PyObject* find_name_in_mro(Type cls, StrName name);
     bool isinstance(PyObject* obj, Type base);
     bool issubclass(Type cls, Type base);
-    PyObject* exec(Str source, Str filename, CompileMode mode, PyObject* _module=nullptr);
-    PyObject* exec(Str source);
-    PyObject* eval(Str source);
+
+    CodeObject_ compile(std::string_view source, const Str& filename, CompileMode mode, bool unknown_global_scope=false);
+    PyObject* exec(std::string_view source, Str filename, CompileMode mode, PyObject* _module=nullptr);
+    PyObject* exec(std::string_view source);
+    PyObject* eval(std::string_view source);
 
     template<typename ...Args>
     PyObject* _exec(Args&&... args){
@@ -202,8 +205,12 @@ public:
     void _push_varargs(PyObject* _0, PyObject* _1, PyObject* _2){ PUSH(_0); PUSH(_1); PUSH(_2); }
     void _push_varargs(PyObject* _0, PyObject* _1, PyObject* _2, PyObject* _3){ PUSH(_0); PUSH(_1); PUSH(_2); PUSH(_3); }
 
-    void stdout_write(const Str& s){
+    virtual void stdout_write(const Str& s){
         _stdout(s.data, s.size);
+    }
+
+    virtual void stderr_write(const Str& s){
+        _stderr(s.data, s.size);
     }
 
     template<typename... Args>
@@ -323,6 +330,7 @@ public:
 
     int normalized_index(int index, int size);
     PyObject* py_next(PyObject* obj);
+    bool py_callable(PyObject* obj);
     
     /***** Error Reporter *****/
     void _raise(bool re_raise=false);
@@ -414,7 +422,6 @@ public:
     void _unpack_as_list(ArgsView args, List& list);
     void _unpack_as_dict(ArgsView args, Dict& dict);
     PyObject* vectorcall(int ARGC, int KWARGC=0, bool op_call=false);
-    CodeObject_ compile(const Str& source, const Str& filename, CompileMode mode, bool unknown_global_scope=false);
     PyObject* py_negate(PyObject* obj);
     bool py_bool(PyObject* obj);
     i64 py_hash(PyObject* obj);
@@ -582,7 +589,7 @@ inline const char* _py_cast<const char*>(VM* vm, PyObject* obj){
 }
 
 inline PyObject* py_var(VM* vm, std::string val){
-    return VAR(Str(std::move(val)));
+    return VAR(Str(val));
 }
 
 inline PyObject* py_var(VM* vm, std::string_view val){

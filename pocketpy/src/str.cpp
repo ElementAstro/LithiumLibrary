@@ -13,60 +13,72 @@ int utf8len(unsigned char c, bool suppress){
     return 0;
 }
 
-    Str::Str(int size, bool is_ascii): size(size), is_ascii(is_ascii) {
-        _alloc();
-    }
-
-#define STR_INIT()                                  \
-        _alloc();                                   \
-        for(int i=0; i<size; i++){                  \
-            data[i] = s[i];                         \
-            if(!isascii(s[i])) is_ascii = false;    \
+#define PK_STR_ALLOCATE()                                   \
+        if(this->size < sizeof(this->_inlined)){            \
+            this->data = this->_inlined;                    \
+        }else{                                              \
+            this->data = (char*)pool64_alloc(this->size+1); \
         }
 
+#define PK_STR_COPY_INIT(__s)  \
+        for(int i=0; i<this->size; i++){                    \
+            this->data[i] = __s[i];                         \
+            if(!isascii(__s[i])) is_ascii = false;          \
+        }                                                   \
+        this->data[this->size] = '\0';
+
+    Str::Str(): size(0), is_ascii(true), data(_inlined) {
+        _inlined[0] = '\0';
+    }
+
+    Str::Str(int size, bool is_ascii): size(size), is_ascii(is_ascii) {
+        PK_STR_ALLOCATE()
+    }
+
     Str::Str(const std::string& s): size(s.size()), is_ascii(true) {
-        STR_INIT()
+        PK_STR_ALLOCATE()
+        PK_STR_COPY_INIT(s)
     }
 
     Str::Str(std::string_view s): size(s.size()), is_ascii(true) {
-        STR_INIT()
+        PK_STR_ALLOCATE()
+        PK_STR_COPY_INIT(s)
     }
 
     Str::Str(const char* s): size(strlen(s)), is_ascii(true) {
-        STR_INIT()
+        PK_STR_ALLOCATE()
+        PK_STR_COPY_INIT(s)
     }
 
     Str::Str(const char* s, int len): size(len), is_ascii(true) {
-        STR_INIT()
+        PK_STR_ALLOCATE()
+        PK_STR_COPY_INIT(s)
     }
 
-#undef STR_INIT
-
-    Str::Str(std::pair<char *, int> detached) {
-        this->size = detached.second;
+    Str::Str(std::pair<char *, int> detached): size(detached.second), is_ascii(true) {
         this->data = detached.first;
-        this->is_ascii = true;
-        // check is_ascii
         for(int i=0; i<size; i++){
-            if(!isascii(data[i])){
-                is_ascii = false;
-                break;
-            }
+            if(!isascii(data[i])){ is_ascii = false; break; }
         }
+        PK_ASSERT(data[size] == '\0');
     }
 
     Str::Str(const Str& other): size(other.size), is_ascii(other.is_ascii) {
-        _alloc();
+        PK_STR_ALLOCATE()
         memcpy(data, other.data, size);
+        data[size] = '\0';
     }
 
     Str::Str(Str&& other): size(other.size), is_ascii(other.is_ascii) {
         if(other.is_inlined()){
             data = _inlined;
             for(int i=0; i<size; i++) _inlined[i] = other._inlined[i];
+            data[size] = '\0';
         }else{
             data = other.data;
+            // zero out `other`
             other.data = other._inlined;
+            other.data[0] = '\0';
             other.size = 0;
         }
     }
@@ -84,21 +96,13 @@ int utf8len(unsigned char c, bool suppress){
         return other < str.sv();
     }
 
-    void Str::_alloc(){
-        if(size <= 16){
-            this->data = _inlined;
-        }else{
-            this->data = (char*)pool64_alloc(size);
-        }
-    }
-
     Str& Str::operator=(const Str& other){
         if(!is_inlined()) pool64_dealloc(data);
         size = other.size;
         is_ascii = other.is_ascii;
-        _cached_c_str = nullptr;
-        _alloc();
+        PK_STR_ALLOCATE()
         memcpy(data, other.data, size);
+        data[size] = '\0';
         return *this;
     }
 
@@ -106,6 +110,7 @@ int utf8len(unsigned char c, bool suppress){
         Str ret(size + other.size, is_ascii && other.is_ascii);
         memcpy(ret.data, data, size);
         memcpy(ret.data + size, other.data, other.size);
+        ret.data[ret.size] = '\0';
         return ret;
     }
 
@@ -164,12 +169,12 @@ int utf8len(unsigned char c, bool suppress){
 
     Str::~Str(){
         if(!is_inlined()) pool64_dealloc(data);
-        if(_cached_c_str != nullptr) free((void*)_cached_c_str);
     }
 
     Str Str::substr(int start, int len) const {
         Str ret(len, is_ascii);
         memcpy(ret.data, data + start, len);
+        ret.data[len] = '\0';
         return ret;
     }
 
@@ -177,18 +182,8 @@ int utf8len(unsigned char c, bool suppress){
         return substr(start, size - start);
     }
 
-    char* Str::c_str_dup() const {
-        char* p = (char*)malloc(size + 1);
-        memcpy(p, data, size);
-        p[size] = 0;
-        return p;
-    }
-
     const char* Str::c_str() const{
-        if(_cached_c_str == nullptr){
-            _cached_c_str = c_str_dup();
-        }
-        return _cached_c_str;
+        return data;
     }
 
     std::string_view Str::sv() const {
@@ -199,24 +194,32 @@ int utf8len(unsigned char c, bool suppress){
         return std::string(data, size);
     }
 
-    Str Str::lstrip() const {
-        std::string copy(data, size);
-        copy.erase(copy.begin(), std::find_if(copy.begin(), copy.end(), [](char c) {
-            // std::isspace(c) does not working on windows (Debug)
-            return c != ' ' && c != '\t' && c != '\r' && c != '\n';
-        }));
-        return Str(copy);
+    Str Str::strip(bool left, bool right, const Str& chars) const {
+        int L = 0;
+        int R = u8_length();
+        if(left){
+            while(L < R && chars.index(u8_getitem(L)) != -1) L++;
+        }
+        if(right){
+            while(L < R && chars.index(u8_getitem(R-1)) != -1) R--;
+        }
+        return u8_slice(L, R, 1);
     }
 
-    Str Str::strip() const {
-        std::string copy(data, size);
-        copy.erase(copy.begin(), std::find_if(copy.begin(), copy.end(), [](char c) {
-            return c != ' ' && c != '\t' && c != '\r' && c != '\n';
-        }));
-        copy.erase(std::find_if(copy.rbegin(), copy.rend(), [](char c) {
-            return c != ' ' && c != '\t' && c != '\r' && c != '\n';
-        }).base(), copy.end());
-        return Str(copy);
+    Str Str::strip(bool left, bool right) const {
+        if(is_ascii){
+            int L = 0;
+            int R = size;
+            if(left){
+                while(L < R && (data[L] == ' ' || data[L] == '\t' || data[L] == '\n' || data[L] == '\r')) L++;
+            }
+            if(right){
+                while(L < R && (data[R-1] == ' ' || data[R-1] == '\t' || data[R-1] == '\n' || data[R-1] == '\r')) R--;
+            }
+            return substr(L, R - L);
+        }else{
+            return strip(left, right, " \t\n\r");
+        }
     }
 
     Str Str::lower() const{
@@ -385,10 +388,6 @@ int utf8len(unsigned char c, bool suppress){
         return cnt;
     }
 
-    std::ostream& operator<<(std::ostream& os, const StrName& sn){
-        return os << sn.sv();
-    }
-
     std::map<std::string, uint16_t, std::less<>>& StrName::_interned(){
         static std::map<std::string, uint16_t, std::less<>> interned;
         return interned;
@@ -435,8 +434,15 @@ int utf8len(unsigned char c, bool suppress){
         return std::string_view(str);
     }
 
+    const char* StrName::c_str() const{
+        const std::string& str = _r_interned()[index];
+        return str.c_str();
+    }
+
     Str SStream::str(){
         // after this call, the buffer is no longer valid
+        buffer.reserve(buffer.size() + 1);  // allocate one more byte for '\0'
+        buffer[buffer.size()] = '\0';       // set '\0'
         return Str(buffer.detach());
     }
 
@@ -515,34 +521,52 @@ int utf8len(unsigned char c, bool suppress){
         return *this;
     }
 
-    void SStream::write_hex(unsigned char c){
-        *this << "0123456789ABCDEF"[c >> 4];
-        *this << "0123456789ABCDEF"[c & 0xf];
+    void SStream::write_hex(unsigned char c, bool non_zero){
+        unsigned char high = c >> 4;
+        unsigned char low = c & 0xf;
+        if(non_zero){
+            if(high) (*this) << "0123456789abcdef"[high];
+            if(high || low) (*this) << "0123456789abcdef"[low];
+        }else{
+            (*this) << "0123456789abcdef"[high];
+            (*this) << "0123456789abcdef"[low];
+        }
     }
 
     void SStream::write_hex(void* p){
+        if(p == nullptr){
+            (*this) << "0x0";
+            return;
+        }
         (*this) << "0x";
         uintptr_t p_t = reinterpret_cast<uintptr_t>(p);
+        bool non_zero = true;
         for(int i=sizeof(void*)-1; i>=0; i--){
             unsigned char cpnt = (p_t >> (i * 8)) & 0xff;
-            write_hex(cpnt);
+            write_hex(cpnt, non_zero);
+            if(cpnt != 0) non_zero = false;
         }
     }
 
     void SStream::write_hex(i64 val){
+        if(val == 0){
+            (*this) << "0x0";
+            return;
+        }
         if(val < 0){
             (*this) << "-";
             val = -val;
         }
         (*this) << "0x";
-        if(val == 0){
-            (*this) << "0";
-            return;
-        }
+        bool non_zero = true;
         for(int i=56; i>=0; i-=8){
             unsigned char cpnt = (val >> i) & 0xff;
-            if(cpnt != 0) write_hex(cpnt);
+            write_hex(cpnt, non_zero);
+            if(cpnt != 0) non_zero = false;
         }
     }
+
+#undef PK_STR_ALLOCATE
+#undef PK_STR_COPY_INIT
 
 } // namespace pkpy

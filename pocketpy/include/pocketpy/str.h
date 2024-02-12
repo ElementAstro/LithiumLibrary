@@ -13,24 +13,21 @@ struct Str{
     int size;
     bool is_ascii;
     char* data;
-    char _inlined[16];
-
-    mutable const char* _cached_c_str = nullptr;
+    char _inlined[24];
 
     bool is_inlined() const { return data == _inlined; }
 
-    Str(): size(0), is_ascii(true), data(_inlined) {}
+    Str();
     Str(int size, bool is_ascii);
     Str(const std::string& s);
     Str(std::string_view s);
-    Str(std::nullptr_t) { PK_FATAL_ERROR(); }
     Str(const char* s);
     Str(const char* s, int len);
     Str(std::pair<char *, int>);
     Str(const Str& other);
     Str(Str&& other);
 
-    void _alloc();
+    operator std::string_view() const { return sv(); }
 
     const char* begin() const { return data; }
     const char* end() const { return data + size; }
@@ -41,34 +38,37 @@ struct Str{
 
     Str& operator=(const Str& other);
     Str operator+(const Str& other) const;
+    friend Str operator+(const char* p, const Str& str);
     Str operator+(const char* p) const;
+
+    bool operator==(const std::string_view other) const;
+    bool operator!=(const std::string_view other) const;
+    bool operator<(const std::string_view other) const;
+    friend bool operator<(const std::string_view other, const Str& str);
+
+    bool operator==(const char* p) const;
+    bool operator!=(const char* p) const;
 
     bool operator==(const Str& other) const;
     bool operator!=(const Str& other) const;
-    bool operator==(const std::string_view other) const;
-    bool operator!=(const std::string_view other) const;
-    bool operator==(const char* p) const;
-    bool operator!=(const char* p) const;
     bool operator<(const Str& other) const;
     bool operator>(const Str& other) const;
     bool operator<=(const Str& other) const;
     bool operator>=(const Str& other) const;
-    bool operator<(const std::string_view other) const;
 
     ~Str();
 
-    friend Str operator+(const char* p, const Str& str);
     friend std::ostream& operator<<(std::ostream& os, const Str& str);
-    friend bool operator<(const std::string_view other, const Str& str);
 
     Str substr(int start, int len) const;
     Str substr(int start) const;
-    char* c_str_dup() const;
     const char* c_str() const;
     std::string_view sv() const;
     std::string str() const;
-    Str lstrip() const;
-    Str strip() const;
+    Str strip(bool left, bool right, const Str& chars) const;
+    Str strip(bool left=true, bool right=true) const;
+    Str lstrip() const { return strip(true, false); }
+    Str rstrip() const { return strip(false, true); }
     Str lower() const;
     Str upper() const;
     Str escape(bool single_quote=true) const;
@@ -95,9 +95,9 @@ struct StrName {
     StrName(const char* s);
     StrName(const Str& s);
     std::string_view sv() const;
+    const char* c_str() const;
     bool empty() const { return index == 0; }
 
-    friend std::ostream& operator<<(std::ostream& os, const StrName& sn);
     Str escape() const;
 
     bool operator==(const StrName& other) const noexcept {
@@ -148,7 +148,7 @@ struct SStream{
     SStream& operator<<(char);
     SStream& operator<<(StrName);
 
-    void write_hex(unsigned char);
+    void write_hex(unsigned char, bool non_zero=false);
     void write_hex(void*);
     void write_hex(i64);
 };

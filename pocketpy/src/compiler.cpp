@@ -10,6 +10,7 @@ namespace pkpy{
 
     CodeObject_ Compiler::push_global_context(){
         CodeObject_ co = std::make_shared<CodeObject>(lexer->src, lexer->src->filename);
+        co->start_line = i==0 ? 1 : prev().line;
         contexts.push(CodeEmitContext(vm, co, contexts.size()));
         return co;
     }
@@ -17,6 +18,7 @@ namespace pkpy{
     FuncDecl_ Compiler::push_f_context(Str name){
         FuncDecl_ decl = std::make_shared<FuncDecl>();
         decl->code = std::make_shared<CodeObject>(lexer->src, name);
+        decl->code->start_line = i==0 ? 1 : prev().line;
         decl->nested = name_scope() == NAME_LOCAL;
         contexts.push(CodeEmitContext(vm, decl->code, contexts.size()));
         contexts.top().func = decl;
@@ -31,6 +33,11 @@ namespace pkpy{
         // previously, we only do this if the last opcode is not a return
         // however, this is buggy...since there may be a jump to the end (out of bound) even if the last opcode is a return
         ctx()->emit_(OP_RETURN_VALUE, 1, BC_KEEPLINE);
+        // find the last valid token
+        int j = i-1;
+        while(tokens[j].type == TK("@eol") || tokens[j].type == TK("@dedent") || tokens[j].type == TK("@eof")) j--;
+        ctx()->co->end_line = tokens[j].line;
+
         // some check here
         std::vector<Bytecode>& codes = ctx()->co->codes;
         if(ctx()->co->varnames.size() > PK_MAX_CO_VARNAMES){
@@ -223,7 +230,7 @@ namespace pkpy{
             _compile_f_args(e->decl, false);
             consume(TK(":"));
         }
-        // https://github.com/blueloveTH/pocketpy/issues/37
+        // https://github.com/pocketpy/pocketpy/issues/37
         parse_expression(PREC_LAMBDA + 1);
         ctx()->emit_expr();
         ctx()->emit_(OP_RETURN_VALUE, BC_NOARG, BC_KEEPLINE);
@@ -944,7 +951,6 @@ __EAT_DOTS_END:
                         is_typed_name = true;
 
                         if(ctx()->is_compiling_class){
-                            // add to __annotations__
                             NameExpr* ne = static_cast<NameExpr*>(ctx()->s_expr.top().get());
                             ctx()->emit_(OP_ADD_CLASS_ANNOTATION, ne->name.index, BC_KEEPLINE);
                         }
@@ -1156,12 +1162,23 @@ __EAT_DOTS_END:
             case TK("False"): return VAR(false);
             case TK("None"): return vm->None;
             case TK("..."): return vm->Ellipsis;
+            case TK("("): {
+                List cpnts;
+                while(true) {
+                    cpnts.push_back(read_literal());
+                    if(curr().type == TK(")")) break;
+                    consume(TK(","));
+                    if(curr().type == TK(")")) break;
+                }
+                consume(TK(")"));
+                return VAR(Tuple(std::move(cpnts)));
+            }
             default: break;
         }
         return nullptr;
     }
 
-    Compiler::Compiler(VM* vm, const Str& source, const Str& filename, CompileMode mode, bool unknown_global_scope){
+    Compiler::Compiler(VM* vm, std::string_view source, const Str& filename, CompileMode mode, bool unknown_global_scope){
         this->vm = vm;
         this->used = false;
         this->unknown_global_scope = unknown_global_scope;

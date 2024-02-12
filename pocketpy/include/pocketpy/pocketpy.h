@@ -14,4 +14,6 @@
 #include "bindings.h"
 #include "collections.h"
 #include "csv.h"
+#include "dataclasses.h"
+#include "array2d.h"
 #include "modules.h"
