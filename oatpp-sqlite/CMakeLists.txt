@@ -30,3 +30,13 @@ set_target_properties(oatpp-sqlite PROPERTIES
         CXX_EXTENSIONS OFF
         CXX_STANDARD_REQUIRED ON
 )
+
+if(OATPP_MODULES_LOCATION STREQUAL OATPP_MODULES_LOCATION_EXTERNAL)
+    add_dependencies(oatpp-sqlite ${LIB_OATPP_EXTERNAL})
+endif()
+
+target_link_libraries(oatpp-sqlite PUBLIC oatpp sqlite3)
+
+target_include_directories(oatpp-sqlite
+        PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+)
