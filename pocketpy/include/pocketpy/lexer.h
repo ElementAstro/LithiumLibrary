@@ -104,9 +104,8 @@ struct Lexer {
     const char* curr_char;
     int current_line = 1;
     std::vector<Token> nexts;
-    stack<int> indents;
+    stack_no_copy<int, small_vector_no_copy_and_move<int, 8>> indents;
     int brackets_level = 0;
-    bool used = false;
 
     char peekchar() const{ return *curr_char; }
     bool match_n_chars(int n, char c0);
@@ -137,6 +136,13 @@ struct Lexer {
     std::vector<Token> run();
 };
 
-bool parse_int(std::string_view text, i64* out, int base);
+
+enum class IntParsingResult{
+    Success,
+    Failure,
+    Overflow,
+};
+
+IntParsingResult parse_int(std::string_view text, i64* out, int base);
 
 } // namespace pkpy

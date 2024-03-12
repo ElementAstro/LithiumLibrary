@@ -13,7 +13,7 @@ struct Str{
     int size;
     bool is_ascii;
     char* data;
-    char _inlined[24];
+    char _inlined[16];
 
     bool is_inlined() const { return data == _inlined; }
 
@@ -60,11 +60,12 @@ struct Str{
 
     friend std::ostream& operator<<(std::ostream& os, const Str& str);
 
+    const char* c_str() const { return data; }
+    std::string_view sv() const { return std::string_view(data, size); }
+    std::string str() const { return std::string(data, size); }
+
     Str substr(int start, int len) const;
     Str substr(int start) const;
-    const char* c_str() const;
-    std::string_view sv() const;
-    std::string str() const;
     Str strip(bool left, bool right, const Str& chars) const;
     Str strip(bool left=true, bool right=true) const;
     Str lstrip() const { return strip(true, false); }
@@ -76,8 +77,8 @@ struct Str{
     int index(const Str& sub, int start=0) const;
     Str replace(char old, char new_) const;
     Str replace(const Str& old, const Str& new_, int count=-1) const;
-    std::vector<std::string_view> split(const Str& sep) const;
-    std::vector<std::string_view> split(char sep) const;
+    pod_vector<std::string_view> split(const Str& sep) const;
+    pod_vector<std::string_view> split(char sep) const;
     int count(const Str& sub) const;
 
     /*************unicode*************/
@@ -90,15 +91,17 @@ struct Str{
 
 struct StrName {
     uint16_t index;
-    StrName();
-    explicit StrName(uint16_t index);
-    StrName(const char* s);
-    StrName(const Str& s);
-    std::string_view sv() const;
-    const char* c_str() const;
-    bool empty() const { return index == 0; }
 
-    Str escape() const;
+    StrName(): index(0) {}
+    explicit StrName(uint16_t index): index(index) {}
+    StrName(const char* s): index(get(s).index) {}
+    StrName(const Str& s): index(get(s.sv()).index) {}
+
+    std::string_view sv() const { return _r_interned()[index];}
+    const char* c_str() const { return _r_interned()[index].c_str(); }
+
+    bool empty() const { return index == 0; }
+    Str escape() const { return Str(sv()).escape(); }
 
     bool operator==(const StrName& other) const noexcept {
         return this->index == other.index;
@@ -152,6 +155,10 @@ struct SStream{
     void write_hex(void*);
     void write_hex(i64);
 };
+
+#ifdef _S
+#undef _S
+#endif
 
 template<typename... Args>
 Str _S(Args&&... args) {

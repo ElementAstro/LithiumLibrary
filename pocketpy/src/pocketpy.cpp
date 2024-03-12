@@ -6,6 +6,27 @@ namespace pkpy{
 void add_module_cjson(VM* vm);
 #endif
 
+template<typename T>
+PyObject* PyArrayGetItem(VM* vm, PyObject* _0, PyObject* _1){
+    static_assert(std::is_same_v<T, List> || std::is_same_v<T, Tuple>);
+    const T& self = _CAST(T&, _0);
+    i64 index;
+    if(try_cast_int(_1, &index)){
+        index = vm->normalized_index(index, self.size());
+        return self[index];
+    }
+    if(is_non_tagged_type(_1, vm->tp_slice)){
+        const Slice& s = _CAST(Slice&, _1);
+        int start, stop, step;
+        vm->parse_int_slice(s, self.size(), start, stop, step);
+        List new_list;
+        PK_SLICE_LOOP(i, start, stop, step) new_list.push_back(self[i]);
+        return VAR(T(std::move(new_list)));
+    }
+    vm->TypeError("indices must be integers or slices");
+    PK_UNREACHABLE()
+}
+
 void init_builtins(VM* _vm) {
 #define BIND_NUM_ARITH_OPT(name, op)                                                                    \
     _vm->bind##name(VM::tp_int, [](VM* vm, PyObject* lhs, PyObject* rhs) {                              \
@@ -114,18 +135,15 @@ void init_builtins(VM* _vm) {
         return VAR(MappingProxy(mod));
     });
 
-    _vm->bind(_vm->builtins, "round(x, ndigits=0)", [](VM* vm, ArgsView args) {
+    _vm->bind(_vm->builtins, "round(x, ndigits=None)", [](VM* vm, ArgsView args) {
+        if(is_int(args[0])) return args[0];
         f64 x = CAST(f64, args[0]);
+        f64 offset = x >= 0 ? 0.5 : -0.5;
+        if(args[1] == vm->None) return VAR((i64)(x + offset));
         int ndigits = CAST(int, args[1]);
-        if(ndigits == 0){
-            return x >= 0 ? VAR((i64)(x + 0.5)) : VAR((i64)(x - 0.5));
-        }
         if(ndigits < 0) vm->ValueError("ndigits should be non-negative");
-        if(x >= 0){
-            return VAR((i64)(x * std::pow(10, ndigits) + 0.5) / std::pow(10, ndigits));
-        }else{
-            return VAR((i64)(x * std::pow(10, ndigits) - 0.5) / std::pow(10, ndigits));
-        }
+        // ndigits > 0
+        return VAR((i64)(x * std::pow(10, ndigits) + offset) / std::pow(10, ndigits));
     });
 
     _vm->bind_func<1>(_vm->builtins, "abs", [](VM* vm, ArgsView args) {
@@ -278,11 +296,11 @@ void init_builtins(VM* _vm) {
     _vm->bind_func<1>(_vm->builtins, "dir", [](VM* vm, ArgsView args) {
         std::set<StrName> names;
         if(!is_tagged(args[0]) && args[0]->is_attr_valid()){
-            std::vector<StrName> keys = args[0]->attr().keys();
+            auto keys = args[0]->attr().keys();
             names.insert(keys.begin(), keys.end());
         }
         const NameDict& t_attr = vm->_t(args[0])->attr();
-        std::vector<StrName> keys = t_attr.keys();
+        auto keys = t_attr.keys();
         names.insert(keys.begin(), keys.end());
         List ret;
         for (StrName name : names) ret.push_back(VAR(name.sv()));
@@ -390,10 +408,17 @@ void init_builtins(VM* _vm) {
             int base = 10;
             if(args.size() == 1+2) base = CAST(i64, args[2]);
             const Str& s = CAST(Str&, args[1]);
-            i64 val;
-            if(!parse_int(s.sv(), &val, base)){
-                vm->ValueError("invalid literal for int(): " + s.escape());
+            std::string_view sv = s.sv();
+            bool negative = false;
+            if(!sv.empty() && (sv[0] == '+' || sv[0] == '-')){
+                negative = sv[0] == '-';
+                sv.remove_prefix(1);
             }
+            i64 val;
+            if(parse_int(sv, &val, base) != IntParsingResult::Success){
+                vm->ValueError(_S("invalid literal for int() with base ", base, ": ", s.escape()));
+            }
+            if(negative) val = -val;
             return VAR(val);
         }
         vm->TypeError("invalid arguments for int()");
@@ -529,7 +554,7 @@ void init_builtins(VM* _vm) {
             vm->parse_int_slice(s, self.u8_length(), start, stop, step);
             return VAR(self.u8_slice(start, stop, step));
         }
-        int i = CAST(int, _1);
+        i64 i = CAST(i64, _1);
         i = vm->normalized_index(i, self.u8_length());
         return VAR(self.u8_getitem(i));
     });
@@ -547,7 +572,7 @@ void init_builtins(VM* _vm) {
         const Str& self = _CAST(Str&, args[0]);
         const Str& sep = CAST(Str&, args[1]);
         if(sep.empty()) vm->ValueError("empty separator");
-        std::vector<std::string_view> parts;
+        pod_vector<std::string_view> parts;
         if(sep.size == 1){
             parts = self.split(sep[0]);
         }else{
@@ -560,7 +585,7 @@ void init_builtins(VM* _vm) {
 
     _vm->bind(_vm->_t(VM::tp_str), "splitlines(self)", [](VM* vm, ArgsView args) {
         const Str& self = _CAST(Str&, args[0]);
-        std::vector<std::string_view> parts;
+        pod_vector<std::string_view> parts;
         parts = self.split('\n');
         List ret(parts.size());
         for(int i=0; i<parts.size(); i++) ret[i] = VAR(Str(parts[i]));
@@ -573,18 +598,20 @@ void init_builtins(VM* _vm) {
         return VAR(self.count(s));
     });
 
-    _vm->bind_method<1>(VM::tp_str, "index", [](VM* vm, ArgsView args) {
+    _vm->bind(_vm->_t(VM::tp_str), "index(self, value, __start=0)", [](VM* vm, ArgsView args) {
         const Str& self = _CAST(Str&, args[0]);
-        const Str& sub = CAST(Str&, args[1]);
-        int index = self.index(sub);
-        if(index == -1) vm->ValueError("substring not found");
+        const Str& value = CAST(Str&, args[1]);
+        int start = CAST(int, args[2]);
+        int index = self.index(value, start);
+        if(index < 0) vm->ValueError("substring not found");
         return VAR(index);
     });
 
-    _vm->bind_method<1>(VM::tp_str, "find", [](VM* vm, ArgsView args) {
+    _vm->bind(_vm->_t(VM::tp_str), "find(self, value, __start=0)", [](VM* vm, ArgsView args) {
         const Str& self = _CAST(Str&, args[0]);
-        const Str& sub = CAST(Str&, args[1]);
-        return VAR(self.index(sub));
+        const Str& value = CAST(Str&, args[1]);
+        int start = CAST(int, args[2]);
+        return VAR(self.index(value, start));
     });
 
     _vm->bind_method<1>(VM::tp_str, "startswith", [](VM* vm, ArgsView args) {
@@ -782,10 +809,11 @@ void init_builtins(VM* _vm) {
         return vm->True;
     });
 
-    _vm->bind_method<1>(VM::tp_list, "index", [](VM* vm, ArgsView args) {
+    _vm->bind(_vm->_t(VM::tp_list), "index(self, value, __start=0)", [](VM* vm, ArgsView args) {
         List& self = _CAST(List&, args[0]);
         PyObject* obj = args[1];
-        for(int i=0; i<self.size(); i++){
+        int start = CAST(int, args[2]);
+        for(int i=start; i<self.size(); i++){
             if(vm->py_eq(self[i], obj)) return VAR(i);
         }
         vm->ValueError(_CAST(Str&, vm->py_repr(obj)) + " is not in list");
@@ -812,7 +840,7 @@ void init_builtins(VM* _vm) {
             return self.popx_back();
         }
         if(args.size() == 1+1){
-            int index = CAST(int, args[1]);
+            i64 index = CAST(i64, args[1]);
             index = vm->normalized_index(index, self.size());
             PyObject* ret = self[index];
             self.erase(index);
@@ -924,13 +952,13 @@ void init_builtins(VM* _vm) {
     _vm->bind__getitem__(VM::tp_list, PyArrayGetItem<List>);
     _vm->bind__setitem__(VM::tp_list, [](VM* vm, PyObject* _0, PyObject* _1, PyObject* _2){
         List& self = _CAST(List&, _0);
-        int i = CAST(int, _1);
+        i64 i = CAST(i64, _1);
         i = vm->normalized_index(i, self.size());
         self[i] = _2;
     });
     _vm->bind__delitem__(VM::tp_list, [](VM* vm, PyObject* _0, PyObject* _1){
         List& self = _CAST(List&, _0);
-        int i = CAST(int, _1);
+        i64 i = CAST(i64, _1);
         i = vm->normalized_index(i, self.size());
         self.erase(i);
     });
@@ -1024,18 +1052,18 @@ void init_builtins(VM* _vm) {
     // tp_bytes
     _vm->bind_constructor<2>(_vm->_t(VM::tp_bytes), [](VM* vm, ArgsView args){
         List& list = CAST(List&, args[1]);
-        std::vector<unsigned char> buffer(list.size());
+        unsigned char* buffer = new unsigned char[list.size()];
         for(int i=0; i<list.size(); i++){
             i64 b = CAST(i64, list[i]);
             if(b<0 || b>255) vm->ValueError("byte must be in range[0, 256)");
             buffer[i] = (char)b;
         }
-        return VAR(Bytes(buffer));
+        return VAR(Bytes(buffer, list.size()));
     });
 
     _vm->bind__getitem__(VM::tp_bytes, [](VM* vm, PyObject* obj, PyObject* index) {
         const Bytes& self = _CAST(Bytes&, obj);
-        int i = CAST(int, index);
+        i64 i = CAST(i64, index);
         i = vm->normalized_index(i, self.size());
         return VAR(self[i]);
     });
@@ -1108,15 +1136,15 @@ void init_builtins(VM* _vm) {
     _vm->bind_method<0>(VM::tp_mappingproxy, "values", [](VM* vm, ArgsView args) {
         MappingProxy& self = _CAST(MappingProxy&, args[0]);
         List values;
-        for(auto& item : self.attr().items()) values.push_back(item.second);
+        for(auto [k, v] : self.attr().items()) values.push_back(v);
         return VAR(std::move(values));
     });
 
     _vm->bind_method<0>(VM::tp_mappingproxy, "items", [](VM* vm, ArgsView args) {
         MappingProxy& self = _CAST(MappingProxy&, args[0]);
         List items;
-        for(auto& item : self.attr().items()){
-            PyObject* t = VAR(Tuple(VAR(item.first.sv()), item.second));
+        for(auto [k, v] : self.attr().items()){
+            PyObject* t = VAR(Tuple(VAR(k.sv()), v));
             items.push_back(std::move(t));
         }
         return VAR(std::move(items));
@@ -1156,11 +1184,11 @@ void init_builtins(VM* _vm) {
         ss << "mappingproxy({";
         bool first = true;
         vm->_repr_recursion_set.insert(_0);
-        for(auto& item : self.attr().items()){
+        for(auto [k, v] : self.attr().items()){
             if(!first) ss << ", ";
             first = false;
-            ss << item.first.escape() << ": ";
-            ss << CAST(Str, vm->py_repr(item.second));
+            ss << k.escape() << ": ";
+            ss << CAST(Str, vm->py_repr(v));
         }
         vm->_repr_recursion_set.erase(_0);
         ss << "})";
@@ -1436,7 +1464,6 @@ void VM::post_init(){
 
     // type
     bind__getitem__(tp_type, [](VM* vm, PyObject* self, PyObject* _){
-        PK_UNUSED(_);
         return self;        // for generics
     });
 

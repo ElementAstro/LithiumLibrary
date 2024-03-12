@@ -20,11 +20,11 @@ class Compiler {
     PK_ALWAYS_PASS_BY_POINTER(Compiler)
 
     inline static PrattRule rules[kTokenCount];
-    std::unique_ptr<Lexer> lexer;
-    stack<CodeEmitContext> contexts;
+
+    Lexer lexer;
+    stack_no_copy<CodeEmitContext> contexts;
     VM* vm;
     bool unknown_global_scope;     // for eval/exec() call
-    bool used;
     // for parsing token stream
     int i = 0;
     std::vector<Token> tokens;
@@ -39,7 +39,7 @@ class Compiler {
     void advance(int delta=1) { i += delta; }
 
     CodeEmitContext* ctx() { return &contexts.top(); }
-    CompileMode mode() const{ return lexer->src->mode; }
+    CompileMode mode() const{ return lexer.src->mode; }
     NameScope name_scope() const;
     CodeObject_ push_global_context();
     FuncDecl_ push_f_context(Str name);
@@ -61,29 +61,14 @@ class Compiler {
     Expr_ EXPR_VARS();  // special case for `for loop` and `comp`
 
     template <typename T, typename... Args>
-    std::unique_ptr<T> make_expr(Args&&... args) {
-        std::unique_ptr<T> expr = std::make_unique<T>(std::forward<Args>(args)...);
+    unique_ptr_128<T> make_expr(Args&&... args) {
+        void* p = pool128_alloc(sizeof(T));
+        unique_ptr_128<T> expr(new (p) T(std::forward<Args>(args)...));
         expr->line = prev().line;
         return expr;
     }
 
-    template<typename T>
-    void _consume_comp(Expr_ expr){
-        static_assert(std::is_base_of<CompExpr, T>::value);
-        std::unique_ptr<CompExpr> ce = make_expr<T>();
-        ce->expr = std::move(expr);
-        ce->vars = EXPR_VARS();
-        consume(TK("in"));
-        parse_expression(PREC_TERNARY + 1);
-        ce->iter = ctx()->s_expr.popx();
-        match_newlines_repl();
-        if(match(TK("if"))){
-            parse_expression(PREC_TERNARY + 1);
-            ce->cond = ctx()->s_expr.popx();
-        }
-        ctx()->s_expr.push(std::move(ce));
-        match_newlines_repl();
-    }
+    void consume_comp(unique_ptr_128<CompExpr> ce, Expr_ expr);
 
     void exprLiteral();
     void exprLong();
@@ -122,17 +107,17 @@ class Compiler {
     bool try_compile_assignment();
     void compile_stmt();
     void consume_type_hints();
-    void _add_decorators(const std::vector<Expr_>& decorators);
-    void compile_class(const std::vector<Expr_>& decorators={});
+    void _add_decorators(const Expr_vector& decorators);
+    void compile_class(const Expr_vector& decorators={});
     void _compile_f_args(FuncDecl_ decl, bool enable_type_hints);
-    void compile_function(const std::vector<Expr_>& decorators={});
+    void compile_function(const Expr_vector& decorators={});
 
     PyObject* to_object(const TokenValue& value);
     PyObject* read_literal();
 
-    void SyntaxError(Str msg){ lexer->throw_err("SyntaxError", msg, err().line, err().start); }
-    void SyntaxError(){ lexer->throw_err("SyntaxError", "invalid syntax", err().line, err().start); }
-    void IndentationError(Str msg){ lexer->throw_err("IndentationError", msg, err().line, err().start); }
+    void SyntaxError(Str msg){ lexer.throw_err("SyntaxError", msg, err().line, err().start); }
+    void SyntaxError(){ lexer.throw_err("SyntaxError", "invalid syntax", err().line, err().start); }
+    void IndentationError(Str msg){ lexer.throw_err("IndentationError", msg, err().line, err().start); }
 
 public:
     Compiler(VM* vm, std::string_view source, const Str& filename, CompileMode mode, bool unknown_global_scope=false);

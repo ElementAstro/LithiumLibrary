@@ -64,11 +64,11 @@ static bool is_unicode_Lo_char(uint32_t c) {
         // https://docs.python.org/3/reference/lexical_analysis.html#indentation
         if(spaces > indents.top()){
             indents.push(spaces);
-            nexts.push_back(Token{TK("@indent"), token_start, 0, current_line, brackets_level});
+            nexts.push_back(Token{TK("@indent"), token_start, 0, current_line, brackets_level, {}});
         } else if(spaces < indents.top()){
             while(spaces < indents.top()){
                 indents.pop();
-                nexts.push_back(Token{TK("@dedent"), token_start, 0, current_line, brackets_level});
+                nexts.push_back(Token{TK("@dedent"), token_start, 0, current_line, brackets_level, {}});
             }
             if(spaces != indents.top()){
                 return false;
@@ -109,8 +109,8 @@ static bool is_unicode_Lo_char(uint32_t c) {
                 }
             }
             // handle multibyte char
-            std::string u8str(curr_char, u8bytes);
-            if(u8str.size() != u8bytes) return 2;
+            Str u8str(curr_char, u8bytes);
+            if(u8str.size != u8bytes) return 2;
             uint32_t value = 0;
             for(int k=0; k < u8bytes; k++){
                 uint8_t b = u8str[k];
@@ -204,7 +204,7 @@ static bool is_unicode_Lo_char(uint32_t c) {
 
     Str Lexer::eat_string_until(char quote, bool raw) {
         bool quote3 = match_n_chars(2, quote);
-        std::vector<char> buff;
+        pod_vector<char> buff;
         while (true) {
             char c = eatchar_include_newline();
             if (c == quote){
@@ -273,10 +273,18 @@ static bool is_unicode_Lo_char(uint32_t c) {
     void Lexer::eat_number() {
         const char* i = token_start;
         while(kValidChars.count(*i)) i++;
+
+        bool is_scientific_notation = false;
+        if(*(i-1) == 'e' && (*i == '+' || *i == '-')){
+            i++;
+            while(isdigit(*i) || *i=='j') i++;
+            is_scientific_notation = true;
+        }
+
         std::string_view text(token_start, i - token_start);
         this->curr_char = i;
 
-        if(text[0] != '.'){
+        if(text[0] != '.' && !is_scientific_notation){
             // try long
             if(i[-1] == 'L'){
                 add_token(TK("@long"));
@@ -284,9 +292,15 @@ static bool is_unicode_Lo_char(uint32_t c) {
             }
             // try integer
             i64 int_out;
-            if(parse_int(text, &int_out, -1)){
-                add_token(TK("@num"), int_out);
-                return;
+            switch(parse_int(text, &int_out, -1)){
+                case IntParsingResult::Success:
+                    add_token(TK("@num"), int_out);
+                    return;
+                case IntParsingResult::Overflow:
+                    SyntaxError("int literal is too large");
+                    return;
+                case IntParsingResult::Failure:
+                    break;  // do nothing
             }
         }
 
@@ -467,18 +481,16 @@ static bool is_unicode_Lo_char(uint32_t c) {
     Lexer::Lexer(VM* vm, std::shared_ptr<SourceData> src) : vm(vm), src(src) {
         this->token_start = src->source.c_str();
         this->curr_char = src->source.c_str();
-        this->nexts.push_back(Token{TK("@sof"), token_start, 0, current_line, brackets_level});
+        this->nexts.push_back(Token{TK("@sof"), token_start, 0, current_line, brackets_level, {}});
         this->indents.push(0);
     }
 
     std::vector<Token> Lexer::run() {
-        PK_ASSERT(!used)
-        used = true;
         while (lex_one_token());
         return std::move(nexts);
     }
 
-bool parse_int(std::string_view text, i64* out, int base){
+IntParsingResult parse_int(std::string_view text, i64* out, int base){
   *out = 0;
 
   const auto f_startswith_2 = [](std::string_view t, const char* prefix) -> bool{
@@ -495,63 +507,67 @@ bool parse_int(std::string_view text, i64* out, int base){
 
   if(base == 10){
     // 10-base  12334
-    if(text.length() == 0) return false;
+    if(text.length() == 0) return IntParsingResult::Failure;
     for(char c : text){
       if(c >= '0' && c <= '9'){
+        i64 prev_out = *out;
         *out = (*out * 10) + (c - '0');
-        if(*out < 0) return false;      // overflow
+        if(*out < prev_out) return IntParsingResult::Overflow;
       }else{
-        return false;
+        return IntParsingResult::Failure;
       }
     }
-    return true;
+    return IntParsingResult::Success;
   }else if(base == 2){
     // 2-base   0b101010
     if(f_startswith_2(text, "0b")) text.remove_prefix(2);
-    if(text.length() == 0) return false;
+    if(text.length() == 0) return IntParsingResult::Failure;
     for(char c : text){
       if(c == '0' || c == '1'){
+        i64 prev_out = *out;
         *out = (*out << 1) | (c - '0');
-        if(*out < 0) return false;      // overflow
+        if(*out < prev_out) return IntParsingResult::Overflow;
       }else{
-        return false;
+        return IntParsingResult::Failure;
       }
     }
-    return true;
+    return IntParsingResult::Success;
   }else if(base == 8){
     // 8-base   0o123
     if(f_startswith_2(text, "0o")) text.remove_prefix(2);
-    if(text.length() == 0) return false;
+    if(text.length() == 0) return IntParsingResult::Failure;
     for(char c : text){
       if(c >= '0' && c <= '7'){
+        i64 prev_out = *out;
         *out = (*out << 3) | (c - '0');
-        if(*out < 0) return false;      // overflow
+        if(*out < prev_out) return IntParsingResult::Overflow;
       }else{
-        return false;
+        return IntParsingResult::Failure;
       }
     }
-    return true;
+    return IntParsingResult::Success;
   }else if(base == 16){
     // 16-base  0x123
     if(f_startswith_2(text, "0x")) text.remove_prefix(2);
-    if(text.length() == 0) return false;
+    if(text.length() == 0) return IntParsingResult::Failure;
     for(char c : text){
+      i64 prev_out = *out;
       if(c >= '0' && c <= '9'){
         *out = (*out << 4) | (c - '0');
-        if(*out < 0) return false;      // overflow
+        if(*out < prev_out) return IntParsingResult::Overflow;
       }else if(c >= 'a' && c <= 'f'){
         *out = (*out << 4) | (c - 'a' + 10);
-        if(*out < 0) return false;      // overflow
+        if(*out < prev_out) return IntParsingResult::Overflow;
       }else if(c >= 'A' && c <= 'F'){
         *out = (*out << 4) | (c - 'A' + 10);
-        if(*out < 0) return false;      // overflow
+        if(*out < prev_out) return IntParsingResult::Overflow;
       }else{
-        return false;
+        return IntParsingResult::Failure;
       }
     }
-    return true;
+    return IntParsingResult::Success;
   }
-  return false;
+  return IntParsingResult::Failure;
 }
 
 }   // namespace pkpy

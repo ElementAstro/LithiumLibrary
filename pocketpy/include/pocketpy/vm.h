@@ -12,6 +12,7 @@
 #include "dict.h"
 #include "profiler.h"
 
+
 namespace pkpy{
 
 /* Stack manipulation macros */
@@ -26,27 +27,6 @@ namespace pkpy{
 #define POPX()            (s_data.popx())
 #define STACK_VIEW(n)     (s_data.view(n))
 
-#define DEF_NATIVE_2(ctype, ptype)                                      \
-    template<> inline ctype py_cast<ctype>(VM* vm, PyObject* obj) {     \
-        vm->check_non_tagged_type(obj, vm->ptype);                      \
-        return PK_OBJ_GET(ctype, obj);                                     \
-    }                                                                   \
-    template<> inline ctype _py_cast<ctype>(VM* vm, PyObject* obj) {    \
-        PK_UNUSED(vm);                                                  \
-        return PK_OBJ_GET(ctype, obj);                                     \
-    }                                                                   \
-    template<> inline ctype& py_cast<ctype&>(VM* vm, PyObject* obj) {   \
-        vm->check_non_tagged_type(obj, vm->ptype);                      \
-        return PK_OBJ_GET(ctype, obj);                                     \
-    }                                                                   \
-    template<> inline ctype& _py_cast<ctype&>(VM* vm, PyObject* obj) {  \
-        PK_UNUSED(vm);                                                  \
-        return PK_OBJ_GET(ctype, obj);                                     \
-    }                                                                   \
-    inline PyObject* py_var(VM* vm, const ctype& value) { return vm->heap.gcnew<ctype>(vm->ptype, value);}     \
-    inline PyObject* py_var(VM* vm, ctype&& value) { return vm->heap.gcnew<ctype>(vm->ptype, std::move(value));}
-
-
 typedef PyObject* (*BinaryFuncC)(VM*, PyObject*, PyObject*);
 
 struct PyTypeInfo{
@@ -56,7 +36,7 @@ struct PyTypeInfo{
     StrName name;
     bool subclass_enabled;
 
-    std::vector<StrName> annotated_fields;
+    pod_vector<StrName> annotated_fields = {};
 
     // cached special methods
     // unary operators
@@ -105,14 +85,6 @@ struct PyTypeInfo{
 
 };
 
-struct FrameId{
-    std::vector<pkpy::Frame>* data;
-    int index;
-    FrameId(std::vector<pkpy::Frame>* data, int index) : data(data), index(index) {}
-    Frame* operator->() const { return &data->operator[](index); }
-    Frame* get() const { return &data->operator[](index); }
-};
-
 typedef void(*PrintFunc)(const char*, int);
 
 class VM {
@@ -122,7 +94,7 @@ class VM {
 public:
     ManagedHeap heap;
     ValueStack s_data;
-    stack< Frame > callstack;
+    stack_no_copy<Frame, CallstackContainer> callstack;
     std::vector<PyTypeInfo> _all_types;
     
     NameDict _modules;                                 // loaded modules
@@ -130,7 +102,7 @@ public:
 
     struct{
         PyObject* error;
-        stack<ArgsView> s_view;
+        stack_no_copy<ArgsView> s_view;
     } _c;
 
     PyObject* None;
@@ -150,6 +122,9 @@ public:
 
     // cached code objects for FSTRING_EVAL
     std::map<std::string_view, CodeObject_> _cached_codes;
+
+    // typeid -> Type
+    std::map<const std::type_info*, Type> _cxx_typeid_map;
 
     void (*_ceval_on_step)(VM*, Frame*, Bytecode bc) = nullptr;
 
@@ -184,6 +159,8 @@ public:
     PyObject* py_json(PyObject* obj);
     PyObject* py_iter(PyObject* obj);
 
+    std::pair<PyObject**, int> _cast_array(PyObject* obj);
+
     PyObject* find_name_in_mro(Type cls, StrName name);
     bool isinstance(PyObject* obj, Type base);
     bool issubclass(Type cls, Type base);
@@ -199,7 +176,7 @@ public:
         return _run_top_frame();
     }
 
-    void _push_varargs(){ }
+    void _push_varargs(){}
     void _push_varargs(PyObject* _0){ PUSH(_0); }
     void _push_varargs(PyObject* _0, PyObject* _1){ PUSH(_0); PUSH(_1); }
     void _push_varargs(PyObject* _0, PyObject* _1, PyObject* _2){ PUSH(_0); PUSH(_1); PUSH(_2); }
@@ -322,13 +299,12 @@ public:
     template<typename T, typename __T>
     PyObject* bind_notimplemented_constructor(__T&& type) {
         return bind_constructor<-1>(std::forward<__T>(type), [](VM* vm, ArgsView args){
-            PK_UNUSED(args);
             vm->NotImplementedError();
             return vm->None;
         });
     }
 
-    int normalized_index(int index, int size);
+    i64 normalized_index(i64 index, int size);
     PyObject* py_next(PyObject* obj);
     bool py_callable(PyObject* obj);
     
@@ -378,6 +354,11 @@ public:
         TypeError("expected " + _type_name(vm, type).escape() + ", got " + _type_name(vm, _tp(obj)).escape());
     }
 
+    void check_compatible_type(PyObject* obj, Type type){
+        if(isinstance(obj, type)) return;
+        TypeError("expected " + _type_name(vm, type).escape() + ", got " + _type_name(vm, _tp(obj)).escape());
+    }
+
     PyObject* _t(Type t){
         return _all_types[t.index].obj;
     }
@@ -394,8 +375,11 @@ public:
 
     struct ImportContext{
         std::vector<Str> pending;
-        std::vector<bool> pending_is_init;   // a.k.a __init__.py
+        pod_vector<bool> pending_is_init;   // a.k.a __init__.py
+
         struct Temp{
+            PK_ALWAYS_PASS_BY_POINTER(Temp)
+
             ImportContext* ctx;
             Temp(ImportContext* ctx, Str name, bool is_init) : ctx(ctx){
                 ctx->pending.push_back(name);
@@ -414,7 +398,7 @@ public:
 
     ImportContext _import_context;
     PyObject* py_import(Str path, bool throw_err=true);
-    ~VM();
+    virtual ~VM();
 
 #if PK_DEBUG_CEVAL_STEP
     void _log_s_data(const char* title = nullptr);
@@ -450,156 +434,157 @@ public:
     PyObject* bind(PyObject*, const char*, const char*, NativeFuncC, UserData userdata={}, BindType bt=BindType::DEFAULT);
     PyObject* bind(PyObject*, const char*, NativeFuncC, UserData userdata={}, BindType bt=BindType::DEFAULT);
     PyObject* bind_property(PyObject*, Str, NativeFuncC fget, NativeFuncC fset=nullptr);
+
+    template<typename T>
+    Type _find_type_in_cxx_typeid_map(){
+        auto it = _cxx_typeid_map.find(&typeid(T));
+        if(it == _cxx_typeid_map.end()){
+    #if __GNUC__ || __clang__
+            throw std::runtime_error(__PRETTY_FUNCTION__ + std::string(" failed: T not found"));
+    #elif _MSC_VER
+            throw std::runtime_error(__FUNCSIG__ + std::string(" failed: T not found"));
+    #else
+            throw std::runtime_error("_find_type_in_cxx_typeid_map() failed: T not found");
+    #endif
+        }
+        return it->second;
+    }
 };
 
-DEF_NATIVE_2(Str, tp_str)
-DEF_NATIVE_2(List, tp_list)
-DEF_NATIVE_2(Tuple, tp_tuple)
-DEF_NATIVE_2(Function, tp_function)
-DEF_NATIVE_2(NativeFunc, tp_native_func)
-DEF_NATIVE_2(BoundMethod, tp_bound_method)
-DEF_NATIVE_2(Range, tp_range)
-DEF_NATIVE_2(Slice, tp_slice)
-DEF_NATIVE_2(Exception, tp_exception)
-DEF_NATIVE_2(Bytes, tp_bytes)
-DEF_NATIVE_2(MappingProxy, tp_mappingproxy)
-DEF_NATIVE_2(Dict, tp_dict)
-DEF_NATIVE_2(Property, tp_property)
-DEF_NATIVE_2(StarWrapper, tp_star_wrapper)
-DEF_NATIVE_2(StaticMethod, tp_staticmethod)
-DEF_NATIVE_2(ClassMethod, tp_classmethod)
 
-#undef DEF_NATIVE_2
+template<typename T>
+inline constexpr bool is_immutable_v = is_integral_v<T> || is_floating_point_v<T>
+    || std::is_same_v<T, Str> || std::is_same_v<T, Tuple> || std::is_same_v<T, Bytes> || std::is_same_v<T, bool>
+    || std::is_same_v<T, Range> || std::is_same_v<T, Slice>
+    || std::is_pointer_v<T> || std::is_enum_v<T>;
 
-#define PY_CAST_INT(T)                                  \
-template<> inline T py_cast<T>(VM* vm, PyObject* obj){  \
-    if(is_small_int(obj)) return (T)(PK_BITS(obj) >> 2);    \
-    if(is_heap_int(obj)) return (T)PK_OBJ_GET(i64, obj);    \
-    vm->check_type(obj, vm->tp_int);                        \
-    return 0;                                               \
-}                                                           \
-template<> inline T _py_cast<T>(VM* vm, PyObject* obj){     \
-    PK_UNUSED(vm);                                          \
-    if(is_small_int(obj)) return (T)(PK_BITS(obj) >> 2);    \
-    return (T)PK_OBJ_GET(i64, obj);                         \
-}
+template<typename T> constexpr Type _find_type_in_const_cxx_typeid_map(){ return -1; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Str>(){ return VM::tp_str; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<List>(){ return VM::tp_list; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Tuple>(){ return VM::tp_tuple; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Function>(){ return VM::tp_function; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<NativeFunc>(){ return VM::tp_native_func; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<BoundMethod>(){ return VM::tp_bound_method; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Range>(){ return VM::tp_range; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Slice>(){ return VM::tp_slice; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Exception>(){ return VM::tp_exception; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Bytes>(){ return VM::tp_bytes; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<MappingProxy>(){ return VM::tp_mappingproxy; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Dict>(){ return VM::tp_dict; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<Property>(){ return VM::tp_property; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<StarWrapper>(){ return VM::tp_star_wrapper; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<StaticMethod>(){ return VM::tp_staticmethod; }
+template<> constexpr Type _find_type_in_const_cxx_typeid_map<ClassMethod>(){ return VM::tp_classmethod; }
 
-PY_CAST_INT(char)
-PY_CAST_INT(short)
-PY_CAST_INT(int)
-PY_CAST_INT(long)
-PY_CAST_INT(long long)
-PY_CAST_INT(unsigned char)
-PY_CAST_INT(unsigned short)
-PY_CAST_INT(unsigned int)
-PY_CAST_INT(unsigned long)
-PY_CAST_INT(unsigned long long)
+template<typename __T>
+PyObject* py_var(VM* vm, __T&& value){
+    using T = std::decay_t<__T>;
 
-template<> inline float py_cast<float>(VM* vm, PyObject* obj){
-    if(is_float(obj)) return untag_float(obj);
-    i64 bits;
-    if(try_cast_int(obj, &bits)) return (float)bits;
-    vm->TypeError("expected 'int' or 'float', got " + _type_name(vm, vm->_tp(obj)).escape());
-    return 0;
-}
-template<> inline float _py_cast<float>(VM* vm, PyObject* obj){
-    return py_cast<float>(vm, obj);
-}
-template<> inline double py_cast<double>(VM* vm, PyObject* obj){
-    if(is_float(obj)) return untag_float(obj);
-    i64 bits;
-    if(try_cast_int(obj, &bits)) return (float)bits;
-    vm->TypeError("expected 'int' or 'float', got " + _type_name(vm, vm->_tp(obj)).escape());
-    return 0;
-}
-template<> inline double _py_cast<double>(VM* vm, PyObject* obj){
-    return py_cast<double>(vm, obj);
-}
+    static_assert(!std::is_same_v<T, PyObject*>, "py_var(VM*, PyObject*) is not allowed");
 
-#define PY_VAR_INT(T)                                       \
-    inline PyObject* py_var(VM* vm, T _val){                \
-        i64 val = static_cast<i64>(_val);                   \
-        if(val >= Number::kMinSmallInt && val <= Number::kMaxSmallInt){     \
-            val = (val << 2) | 0b10;                        \
-            return reinterpret_cast<PyObject*>(val);        \
-        }else{                                              \
-            return vm->heap.gcnew<i64>(vm->tp_int, val);    \
-        }                                                   \
+    if constexpr(std::is_same_v<T, const char*> || std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>){
+        // str (shortcuts)
+        return VAR(Str(std::forward<__T>(value)));
+    }else if constexpr(std::is_same_v<T, NoReturn>){
+        // NoneType
+        return vm->None;
+    }else if constexpr(std::is_same_v<T, bool>){
+        // bool
+        return value ? vm->True : vm->False;
+    }else if constexpr(is_integral_v<T>){
+        // int
+        i64 val = static_cast<i64>(std::forward<__T>(value));
+        if(val >= Number::kMinSmallInt && val <= Number::kMaxSmallInt){
+            val = (val << 2) | 0b10;
+            return reinterpret_cast<PyObject*>(val);
+        }else{
+            return vm->heap.gcnew<i64>(vm->tp_int, val);
+        }
+    }else if constexpr(is_floating_point_v<T>){
+        // float
+        return tag_float(static_cast<f64>(std::forward<__T>(value)));
+    }else if constexpr(std::is_pointer_v<T>){
+        return from_void_p(vm, (void*)value);
+    }else{
+        constexpr Type const_type = _find_type_in_const_cxx_typeid_map<T>();
+        if constexpr(const_type.index >= 0){
+            return vm->heap.gcnew<T>(const_type, std::forward<__T>(value));
+        }
     }
-
-PY_VAR_INT(char)
-PY_VAR_INT(short)
-PY_VAR_INT(int)
-PY_VAR_INT(long)
-PY_VAR_INT(long long)
-PY_VAR_INT(unsigned char)
-PY_VAR_INT(unsigned short)
-PY_VAR_INT(unsigned int)
-PY_VAR_INT(unsigned long)
-PY_VAR_INT(unsigned long long)
-#undef PY_VAR_INT
-
-inline PyObject* py_var(VM* vm, float _val){
-    PK_UNUSED(vm);
-    return tag_float(static_cast<f64>(_val));
+    Type type = vm->_find_type_in_cxx_typeid_map<T>();
+    return vm->heap.gcnew<T>(type, std::forward<__T>(value));
 }
 
-inline PyObject* py_var(VM* vm, double _val){
-    PK_UNUSED(vm);
-    return tag_float(static_cast<f64>(_val));
+template<typename __T, bool with_check>
+__T _py_cast__internal(VM* vm, PyObject* obj) {
+    static_assert(!std::is_rvalue_reference_v<__T>, "rvalue reference is not allowed");
+
+    using T = std::decay_t<__T>;
+
+    if constexpr(std::is_same_v<T, const char*> || std::is_same_v<T, CString>){
+        static_assert(!std::is_reference_v<__T>);
+        // str (shortcuts)
+        if(obj == vm->None) return nullptr;
+        if constexpr(with_check) vm->check_non_tagged_type(obj, vm->tp_str);
+        return PK_OBJ_GET(Str, obj).c_str();
+    }else if constexpr(std::is_same_v<T, bool>){
+        static_assert(!std::is_reference_v<__T>);
+        // bool
+        if constexpr(with_check){
+            if(obj == vm->True) return true;
+            if(obj == vm->False) return false;
+            vm->TypeError("expected 'bool', got " + _type_name(vm, vm->_tp(obj)).escape());
+        }else{
+            return obj == vm->True;
+        }
+    }else if constexpr(is_integral_v<T>){
+        static_assert(!std::is_reference_v<__T>);
+        // int
+        if constexpr(with_check){
+            if(is_small_int(obj)) return (T)(PK_BITS(obj) >> 2);
+            if(is_heap_int(obj)) return (T)PK_OBJ_GET(i64, obj);
+            vm->TypeError("expected 'int', got " + _type_name(vm, vm->_tp(obj)).escape());
+        }else{
+            if(is_small_int(obj)) return (T)(PK_BITS(obj) >> 2);
+            return (T)PK_OBJ_GET(i64, obj);
+        }
+    }else if constexpr(is_floating_point_v<T>){
+        static_assert(!std::is_reference_v<__T>);
+        // float
+        if(is_float(obj)) return untag_float(obj);
+        i64 bits;
+        if(try_cast_int(obj, &bits)) return (float)bits;
+        vm->TypeError("expected 'int' or 'float', got " + _type_name(vm, vm->_tp(obj)).escape());
+    }else if constexpr(std::is_enum_v<T>){
+        static_assert(!std::is_reference_v<__T>);
+        return (__T)_py_cast__internal<i64, with_check>(vm, obj);
+    }else if constexpr(std::is_pointer_v<T>){
+        static_assert(!std::is_reference_v<__T>);
+        return to_void_p<T>(vm, obj);
+    }else{
+        constexpr Type const_type = _find_type_in_const_cxx_typeid_map<T>();
+        if constexpr(const_type.index >= 0){
+            if constexpr(with_check){
+                if constexpr(std::is_same_v<T, Exception>){
+                    // Exception is `subclass_enabled`
+                    vm->check_compatible_type(obj, const_type);
+                }else{
+                    vm->check_non_tagged_type(obj, const_type);
+                }
+            }
+            return PK_OBJ_GET(T, obj);
+        }
+    }
+    Type type = vm->_find_type_in_cxx_typeid_map<T>();
+    if constexpr(with_check) vm->check_compatible_type(obj, type);
+    return PK_OBJ_GET(T, obj);
 }
 
-inline PyObject* py_var(VM* vm, bool val){
-    return val ? vm->True : vm->False;
-}
+template<typename __T>
+__T  py_cast(VM* vm, PyObject* obj) { return _py_cast__internal<__T, true>(vm, obj); }
+template<typename __T>
+__T _py_cast(VM* vm, PyObject* obj) { return _py_cast__internal<__T, false>(vm, obj); }
 
-template<> inline bool py_cast<bool>(VM* vm, PyObject* obj){
-    if(obj == vm->True) return true;
-    if(obj == vm->False) return false;
-    vm->check_non_tagged_type(obj, vm->tp_bool);
-    return false;
-}
-template<> inline bool _py_cast<bool>(VM* vm, PyObject* obj){
-    return obj == vm->True;
-}
-
-template<> inline CString py_cast<CString>(VM* vm, PyObject* obj){
-    vm->check_non_tagged_type(obj, vm->tp_str);
-    return PK_OBJ_GET(Str, obj).c_str();
-}
-
-template<> inline CString _py_cast<CString>(VM* vm, PyObject* obj){
-    return PK_OBJ_GET(Str, obj).c_str();
-}
-
-inline PyObject* py_var(VM* vm, const char* val){
-    return VAR(Str(val));
-}
-
-template<>
-inline const char* py_cast<const char*>(VM* vm, PyObject* obj){
-    if(obj == vm->None) return nullptr;
-    vm->check_non_tagged_type(obj, vm->tp_str);
-    return PK_OBJ_GET(Str, obj).c_str();
-}
-
-template<>
-inline const char* _py_cast<const char*>(VM* vm, PyObject* obj){
-    return PK_OBJ_GET(Str, obj).c_str();
-}
-
-inline PyObject* py_var(VM* vm, std::string val){
-    return VAR(Str(val));
-}
-
-inline PyObject* py_var(VM* vm, std::string_view val){
-    return VAR(Str(val));
-}
-
-inline PyObject* py_var(VM* vm, NoReturn val){
-    PK_UNUSED(val);
-    return vm->None;
-}
 
 template<int ARGC>
 PyObject* VM::bind_method(Type type, Str name, NativeFuncC fn) {
@@ -627,24 +612,4 @@ PyObject* VM::bind_func(PyObject* obj, Str name, NativeFuncC fn, UserData userda
     return nf;
 }
 
-/***************************************************/
-
-template<typename T>
-PyObject* PyArrayGetItem(VM* vm, PyObject* obj, PyObject* index){
-    static_assert(std::is_same_v<T, List> || std::is_same_v<T, Tuple>);
-    const T& self = _CAST(T&, obj);
-
-    if(is_non_tagged_type(index, vm->tp_slice)){
-        const Slice& s = _CAST(Slice&, index);
-        int start, stop, step;
-        vm->parse_int_slice(s, self.size(), start, stop, step);
-        List new_list;
-        for(int i=start; step>0?i<stop:i>stop; i+=step) new_list.push_back(self[i]);
-        return VAR(T(std::move(new_list)));
-    }
-
-    int i = CAST(int, index);
-    i = vm->normalized_index(i, self.size());
-    return self[i];
-}
 }   // namespace pkpy

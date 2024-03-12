@@ -22,6 +22,8 @@ struct ManagedHeap{
     /********************/
     int _gc_lock_counter = 0;
     struct ScopeLock{
+        PK_ALWAYS_PASS_BY_POINTER(ScopeLock)
+        
         ManagedHeap* heap;
         ScopeLock(ManagedHeap* heap): heap(heap){
             heap->_gc_lock_counter++;
@@ -51,7 +53,7 @@ struct ManagedHeap{
         using __T = Py_<std::decay_t<T>>;
         // https://github.com/pocketpy/pocketpy/issues/94#issuecomment-1594784476
         PyObject* obj = new(pool64_alloc<__T>()) Py_<std::decay_t<T>>(type, std::forward<Args>(args)...);
-        obj->gc.enabled = false;
+        obj->gc_enabled = false;
         _no_gc.push_back(obj);
         return obj;
     }

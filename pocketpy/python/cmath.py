@@ -12,15 +12,14 @@ class complex:
     @property
     def imag(self):
         return self._imag
-    
+
     def conjugate(self):
         return complex(self.real, -self.imag)
     
     def __repr__(self):
         s = ['(', str(self.real)]
-        if self.imag >= 0:
-            s.append('+')
-        s.append(str(self.imag))
+        s.append('-' if self.imag < 0 else '+')
+        s.append(str(abs(self.imag)))
         s.append('j)')
         return ''.join(s)
     
@@ -65,6 +64,16 @@ class complex:
     
     def __rmul__(self, other):
         return self.__mul__(other)
+    
+    def __truediv__(self, other):
+        if type(other) is complex:
+            denominator = other.real ** 2 + other.imag ** 2
+            real_part = (self.real * other.real + self.imag * other.imag) / denominator
+            imag_part = (self.imag * other.real - self.real * other.imag) / denominator
+            return complex(real_part, imag_part)
+        if type(other) in (int, float):
+            return complex(self.real / other, self.imag / other)
+        return NotImplemented
     
     def __pow__(self, other: int | float):
         if type(other) in (int, float):

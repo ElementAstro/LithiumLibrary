@@ -1,12 +1,6 @@
 #include "pocketpy/obj.h"
 
 namespace pkpy{
-    PyObject::~PyObject() {
-        if(_attr == nullptr) return;
-        _attr->~NameDict();
-        pool128_dealloc(_attr);
-    }
-
     bool Bytes::operator==(const Bytes& rhs) const{
         if(_size != rhs._size) return false;
         for(int i=0; i<_size; i++) if(_data[i] != rhs._data[i]) return false;
@@ -14,11 +8,6 @@ namespace pkpy{
     }
     bool Bytes::operator!=(const Bytes& rhs) const{ return !(*this == rhs); }
 
-    Bytes::Bytes(const std::vector<unsigned char>& v){
-        _data = new unsigned char[v.size()];
-        _size = v.size();
-        for(int i=0; i<_size; i++) _data[i] = v[i];
-    }
     Bytes::Bytes(std::string_view sv){
         _data = new unsigned char[sv.size()];
         _size = sv.size();
