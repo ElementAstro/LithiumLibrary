@@ -2,15 +2,15 @@
 
 namespace pkpy{
 
-    inline bool is_imm_int(i64 v){
-        return v >= INT16_MIN && v <= INT16_MAX;
-    }
-
     inline bool is_identifier(std::string_view s){
         if(s.empty()) return false;
         if(!isalpha(s[0]) && s[0] != '_') return false;
         for(char c: s) if(!isalnum(c) && c != '_') return false;
         return true;
+    }
+
+    inline bool is_small_int(i64 value){
+        return value >= 0 && value < 1024;
     }
 
     int CodeEmitContext::get_loop() const {
@@ -64,6 +64,40 @@ namespace pkpy{
         return i;
     }
 
+    void CodeEmitContext::revert_last_emit_(){
+        co->codes.pop_back();
+        co->iblocks.pop_back();
+        co->lines.pop_back();
+    }
+
+    void CodeEmitContext::try_merge_for_iter_store(int i){
+        // [FOR_ITER, STORE_?, ]
+        if(co->codes[i].op != OP_FOR_ITER) return;
+        if(co->codes.size() - i != 2) return;
+        uint16_t arg = co->codes[i+1].arg;
+        if(co->codes[i+1].op == OP_STORE_FAST){
+            revert_last_emit_();
+            co->codes[i].op = OP_FOR_ITER_STORE_FAST;
+            co->codes[i].arg = arg;
+            return;
+        }
+        if(co->codes[i+1].op == OP_STORE_GLOBAL){
+            revert_last_emit_();
+            co->codes[i].op = OP_FOR_ITER_STORE_GLOBAL;
+            co->codes[i].arg = arg;
+            return;
+        }
+    }
+
+    int CodeEmitContext::emit_int(i64 value, int line){
+        if(is_small_int(value)){
+            value = (value << 2) | 0b10;
+            return emit_(OP_LOAD_SMALL_INT, (uint16_t)value, line);
+        }else{
+            return emit_(OP_LOAD_CONST, add_const(VAR(value)), line);
+        }
+    }
+
     void CodeEmitContext::patch_jump(int index) {
         int target = co->codes.size();
         co->codes[index].arg = target;
@@ -98,7 +132,7 @@ namespace pkpy{
     }
 
     int CodeEmitContext::add_const(PyObject* v){
-        if(is_non_tagged_type(v, vm->tp_str)){
+        if(is_type(v, vm->tp_str)){
             // warning: should use add_const_string() instead
             return add_const_string(PK_OBJ_GET(Str, v).sv());
         }else{
@@ -246,11 +280,7 @@ namespace pkpy{
         VM* vm = ctx->vm;
         if(std::holds_alternative<i64>(value)){
             i64 _val = std::get<i64>(value);
-            if(is_imm_int(_val)){
-                ctx->emit_(OP_LOAD_INTEGER, (uint16_t)_val, line);
-                return;
-            }
-            ctx->emit_(OP_LOAD_CONST, ctx->add_const(VAR(_val)), line);
+            ctx->emit_int(_val, line);
             return;
         }
         if(std::holds_alternative<f64>(value)){
@@ -272,11 +302,7 @@ namespace pkpy{
             LiteralExpr* lit = static_cast<LiteralExpr*>(child.get());
             if(std::holds_alternative<i64>(lit->value)){
                 i64 _val = -std::get<i64>(lit->value);
-                if(is_imm_int(_val)){
-                    ctx->emit_(OP_LOAD_INTEGER, (uint16_t)_val, line);
-                }else{
-                    ctx->emit_(OP_LOAD_CONST, ctx->add_const(VAR(_val)), line);
-                }
+                ctx->emit_int(_val, line);
                 return;
             }
             if(std::holds_alternative<f64>(lit->value)){
@@ -337,10 +363,14 @@ namespace pkpy{
             Bytecode& prev = ctx->co->codes.back();
             if(prev.op == OP_BUILD_TUPLE && prev.arg == items.size()){
                 // build tuple and unpack it is meaningless
-                prev.op = OP_NO_OP;
-                prev.arg = BC_NOARG;
+                ctx->revert_last_emit_();
             }else{
-                ctx->emit_(OP_UNPACK_SEQUENCE, items.size(), line);
+                if(prev.op == OP_FOR_ITER){
+                    prev.op = OP_FOR_ITER_UNPACK;
+                    prev.arg = items.size();
+                }else{
+                    ctx->emit_(OP_UNPACK_SEQUENCE, items.size(), line);
+                }
             }
         }else{
             // starred assignment target must be in a tuple
@@ -372,10 +402,11 @@ namespace pkpy{
         iter->emit_(ctx);
         ctx->emit_(OP_GET_ITER, BC_NOARG, BC_KEEPLINE);
         ctx->enter_block(CodeBlockType::FOR_LOOP);
-        ctx->emit_(OP_FOR_ITER, BC_NOARG, BC_KEEPLINE);
+        int for_codei = ctx->emit_(OP_FOR_ITER, BC_NOARG, BC_KEEPLINE);
         bool ok = vars->emit_store(ctx);
         // this error occurs in `vars` instead of this line, but...nevermind
-        PK_ASSERT(ok);  // TODO: raise a SyntaxError instead
+        if(!ok) throw std::runtime_error("SyntaxError");
+        ctx->try_merge_for_iter_store(for_codei);
         if(cond){
             cond->emit_(ctx);
             int patch = ctx->emit_(OP_POP_JUMP_IF_FALSE, BC_NOARG, BC_KEEPLINE);
@@ -514,20 +545,35 @@ namespace pkpy{
     void SubscrExpr::emit_(CodeEmitContext* ctx){
         a->emit_(ctx);
         b->emit_(ctx);
-        ctx->emit_(OP_LOAD_SUBSCR, BC_NOARG, line);
+        Bytecode last_bc = ctx->co->codes.back();
+        if(b->is_name() && last_bc.op == OP_LOAD_FAST){
+            ctx->revert_last_emit_();
+            ctx->emit_(OP_LOAD_SUBSCR_FAST, last_bc.arg, line);
+        }else if(b->is_literal() && last_bc.op == OP_LOAD_SMALL_INT){
+            ctx->revert_last_emit_();
+            ctx->emit_(OP_LOAD_SUBSCR_SMALL_INT, last_bc.arg, line);
+        }else{
+            ctx->emit_(OP_LOAD_SUBSCR, BC_NOARG, line);
+        }
+    }
+
+    bool SubscrExpr::emit_store(CodeEmitContext* ctx){
+        a->emit_(ctx);
+        b->emit_(ctx);
+        Bytecode last_bc = ctx->co->codes.back();
+        if(b->is_name() && last_bc.op == OP_LOAD_FAST){
+            ctx->revert_last_emit_();
+            ctx->emit_(OP_STORE_SUBSCR_FAST, last_bc.arg, line);
+        }else{
+            ctx->emit_(OP_STORE_SUBSCR, BC_NOARG, line);
+        }
+        return true;
     }
 
     bool SubscrExpr::emit_del(CodeEmitContext* ctx){
         a->emit_(ctx);
         b->emit_(ctx);
         ctx->emit_(OP_DELETE_SUBSCR, BC_NOARG, line);
-        return true;
-    }
-
-    bool SubscrExpr::emit_store(CodeEmitContext* ctx){
-        a->emit_(ctx);
-        b->emit_(ctx);
-        ctx->emit_(OP_STORE_SUBSCR, BC_NOARG, line);
         return true;
     }
 
@@ -594,8 +640,8 @@ namespace pkpy{
             // vectorcall protocol
             for(auto& item: args) item->emit_(ctx);
             for(auto& item: kwargs){
-                uint16_t index = StrName(item.first.sv()).index;
-                ctx->emit_(OP_LOAD_INTEGER, index, line);
+                i64 _val = StrName(item.first.sv()).index;
+                ctx->emit_int(_val, line);
                 item.second->emit_(ctx);
             }
             int KWARGC = kwargs.size();

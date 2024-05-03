@@ -31,10 +31,14 @@ struct SourceData {
 
     Str source;
     pod_vector<const char*> line_starts;
+
+    bool is_precompiled;
+    std::vector<Str> _precompiled_tokens;
     
     SourceData(std::string_view source, const Str& filename, CompileMode mode);
     SourceData(const Str& filename, CompileMode mode);
     std::pair<const char*,const char*> _get_line(int lineno) const;
+    std::string_view get_line(int lineno) const;
     Str snapshot(int lineno, const char* cursor, std::string_view name) const;
 };
 
@@ -70,7 +74,7 @@ struct Exception {
 
     template<typename... Args>
     void st_push(Args&&... args){
-        if(stacktrace.size() >= 8) return;
+        if(stacktrace.size() >= 7) return;
         stacktrace.emplace(std::forward<Args>(args)...);
     }
 

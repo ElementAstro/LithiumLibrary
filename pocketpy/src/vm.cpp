@@ -1,5 +1,11 @@
 #include "pocketpy/vm.h"
 
+static const char* OP_NAMES[] = {
+    #define OPCODE(name) #name,
+    #include "pocketpy/opcodes.h"
+    #undef OPCODE
+};
+
 namespace pkpy{
 
     struct JsonSerializer{
@@ -25,7 +31,7 @@ namespace pkpy{
             dict.apply([&](PyObject* k, PyObject* v){
                 if(!first) ss << ", ";
                 first = false;
-                if(!is_non_tagged_type(k, vm->tp_str)){
+                if(!is_type(k, VM::tp_str)){
                     vm->TypeError(_S("json keys must be string, got ", _type_name(vm, vm->_tp(k))));
                 }
                 ss << _CAST(Str&, k).escape(false) << ": ";
@@ -72,9 +78,9 @@ namespace pkpy{
         _stdout = [](const char* buf, int size) { std::cout.write(buf, size); };
         _stderr = [](const char* buf, int size) { std::cerr.write(buf, size); };
         _main = nullptr;
-        _last_exception = nullptr;
+        __last_exception = nullptr;
         _import_handler = [](const char* name_p, int name_size, int* out_size) -> unsigned char*{ return nullptr; };
-        init_builtin_types();
+        __init_builtin_types();
     }
 
     PyObject* VM::py_str(PyObject* obj){
@@ -107,29 +113,23 @@ namespace pkpy{
         return nullptr;
     }
 
-    std::pair<PyObject**, int> VM::_cast_array(PyObject* obj){
-        if(is_non_tagged_type(obj, VM::tp_list)){
+    ArgsView VM::cast_array_view(PyObject* obj){
+        if(is_type(obj, VM::tp_list)){
             List& list = PK_OBJ_GET(List, obj);
-            return {list.data(), list.size()};
-        }else if(is_non_tagged_type(obj, VM::tp_tuple)){
+            return ArgsView(list.begin(), list.end());
+        }else if(is_type(obj, VM::tp_tuple)){
             Tuple& tuple = PK_OBJ_GET(Tuple, obj);
-            return {tuple.data(), tuple.size()};
+            return ArgsView(tuple.begin(), tuple.end());
         }
         TypeError(_S("expected list or tuple, got ", _type_name(this, _tp(obj)).escape()));
         PK_UNREACHABLE();
     }
 
-    FrameId VM::top_frame(){
-#if PK_DEBUG_EXTRA_CHECK
-        if(callstack.empty()) PK_FATAL_ERROR();
-#endif
-        return FrameId(&callstack.container(), callstack.size()-1);
-    }
-
-    void VM::_pop_frame(){
-        Frame* frame = &callstack.top();
-        s_data.reset(frame->_sp_base);
-        callstack.pop();
+    void VM::set_main_argv(int argc, char** argv){
+        PyObject* mod = vm->_modules["sys"];
+        List argv_(argc);
+        for(int i=0; i<argc; i++) argv_[i] = VAR(std::string_view(argv[i]));
+        mod->attr().set("argv", VAR(std::move(argv_)));
     }
 
     PyObject* VM::find_name_in_mro(Type cls, StrName name){
@@ -160,15 +160,15 @@ namespace pkpy{
     PyObject* VM::exec(std::string_view source, Str filename, CompileMode mode, PyObject* _module){
         if(_module == nullptr) _module = _main;
         try {
-            CodeObject_ code = compile(source, filename, mode);
-#if PK_DEBUG_DIS_EXEC
-            if(_module == _main) std::cout << disassemble(code) << '\n';
+#if PK_DEBUG_PRECOMPILED_EXEC == 1
+            Str precompiled = vm->precompile(source, filename, mode);
+            source = precompiled.sv();
 #endif
+            CodeObject_ code = compile(source, filename, mode);
             return _exec(code, _module);
         }catch (const Exception& e){
             stderr_write(e.summary() + "\n");
         }
-#if !PK_DEBUG_FULL_EXCEPTION
         catch(const std::exception& e) {
             Str msg = "An std::exception occurred! It could be a bug.\n";
             msg = msg + e.what() + "\n";
@@ -181,7 +181,6 @@ namespace pkpy{
             Str msg = "An unknown exception occurred! It could be a bug. Please report it to @blueloveTH on GitHub.\n";
             stderr_write(msg);
         }
-#endif
         callstack.clear();
         s_data.clear();
         return nullptr;
@@ -199,7 +198,8 @@ namespace pkpy{
         PyObject* obj = heap._new<Type>(tp_type, _all_types.size());
         const PyTypeInfo& base_info = _all_types[base];
         if(!base_info.subclass_enabled){
-            TypeError(_S("type ", base_info.name.escape(), " is not `subclass_enabled`"));
+            Str error = _S("type ", base_info.name.escape(), " is not `subclass_enabled`");
+            throw std::runtime_error(error.c_str());
         }
         PyTypeInfo info{
             obj,
@@ -212,14 +212,8 @@ namespace pkpy{
         return obj;
     }
 
-    Type VM::_new_type_object(StrName name, Type base, bool subclass_enabled) {
-        PyObject* obj = new_type_object(nullptr, name, base, subclass_enabled);
-        return PK_OBJ_GET(Type, obj);
-    }
-
     const PyTypeInfo* VM::_inst_type_info(PyObject* obj){
-        if(is_int(obj)) return &_all_types[tp_int];
-        if(is_float(obj)) return &_all_types[tp_float];
+        if(is_small_int(obj)) return &_all_types[tp_int];
         return &_all_types[obj->type];
     }
 
@@ -252,10 +246,17 @@ namespace pkpy{
         return index;
     }
 
+    PyObject* VM::_py_next(const PyTypeInfo* ti, PyObject* obj){
+        if(ti->m__next__){
+            unsigned n = ti->m__next__(this, obj);
+            return __pack_next_retval(n);
+        }
+        return call_method(obj, __next__);
+    }
+
     PyObject* VM::py_next(PyObject* obj){
         const PyTypeInfo* ti = _inst_type_info(obj);
-        if(ti->m__next__) return ti->m__next__(this, obj);
-        return call_method(obj, __next__);
+        return _py_next(ti, obj);
     }
 
     bool VM::py_callable(PyObject* obj){
@@ -269,6 +270,43 @@ namespace pkpy{
         return vm->find_name_in_mro(cls, __call__) != nullptr;
     }
 
+    PyObject* VM::__minmax_reduce(bool (VM::*op)(PyObject*, PyObject*), PyObject* args, PyObject* key){
+        auto _lock = heap.gc_scope_lock();
+        const Tuple& args_tuple = PK_OBJ_GET(Tuple, args);  // from *args, it must be a tuple
+        if(key==vm->None && args_tuple.size()==2){
+            // fast path
+            PyObject* a = args_tuple[0];
+            PyObject* b = args_tuple[1];
+            return (this->*op)(a, b) ? a : b;
+        }
+
+        if(args_tuple.size() == 0) TypeError("expected at least 1 argument, got 0");
+        
+        ArgsView view(nullptr, nullptr);
+        if(args_tuple.size()==1){
+            view = cast_array_view(args_tuple[0]);
+        }else{
+            view = ArgsView(args_tuple);
+        }
+
+        if(view.empty()) ValueError("arg is an empty sequence");
+        PyObject* res = view[0];
+
+        if(key == vm->None){
+            for(int i=1; i<view.size(); i++){
+                if((this->*op)(view[i], res)) res = view[i];
+            }
+        }else{
+            auto _lock = heap.gc_scope_lock();
+            for(int i=1; i<view.size(); i++){
+                PyObject* a = call(key, view[i]);
+                PyObject* b = call(key, res);
+                if((this->*op)(a, b)) res = view[i];
+            }
+        }
+        return res;
+    }
+
     PyObject* VM::py_import(Str path, bool throw_err){
         if(path.empty()) vm->ValueError("empty module name");
         static auto f_join = [](const pod_vector<std::string_view>& cpnts){
@@ -277,15 +315,15 @@ namespace pkpy{
                 if(i != 0) ss << ".";
                 ss << cpnts[i];
             }
-            return Str(ss.str());
+            return ss.str();
         };
 
         if(path[0] == '.'){
-            if(_import_context.pending.empty()){
+            if(__import_context.pending.empty()){
                 ImportError("relative import outside of package");
             }
-            Str curr_path = _import_context.pending.back();
-            bool curr_is_init = _import_context.pending_is_init.back();
+            Str curr_path = __import_context.pending.back();
+            bool curr_is_init = __import_context.pending_is_init.back();
             // convert relative path to absolute path
             pod_vector<std::string_view> cpnts = curr_path.split('.');
             int prefix = 0;     // how many dots in the prefix
@@ -309,7 +347,7 @@ namespace pkpy{
 
         pod_vector<std::string_view> path_cpnts = path.split('.');
         // check circular import
-        if(_import_context.pending.size() > 128){
+        if(__import_context.pending.size() > 128){
             ImportError("maximum recursion depth exceeded while importing");
         }
 
@@ -337,7 +375,7 @@ namespace pkpy{
             source = it->second;
             _lazy_modules.erase(it);
         }
-        auto _ = _import_context.scope(path, is_init);
+        auto _ = __import_context.scope(path, is_init);
         CodeObject_ code = compile(source, filename, EXEC_MODE);
 
         Str name_cpnt = path_cpnts.back();
@@ -380,10 +418,11 @@ PyObject* VM::py_list(PyObject* it){
     auto _lock = heap.gc_scope_lock();
     it = py_iter(it);
     List list;
-    PyObject* obj = py_next(it);
+    const PyTypeInfo* info = _inst_type_info(it);
+    PyObject* obj = _py_next(info, it);
     while(obj != StopIteration){
         list.push_back(obj);
-        obj = py_next(it);
+        obj = _py_next(info, it);
     }
     return VAR(std::move(list));
 }
@@ -460,7 +499,7 @@ i64 VM::py_hash(PyObject* obj){
     }
 }
 
-PyObject* VM::_format_string(Str spec, PyObject* obj){
+PyObject* VM::__format_object(PyObject* obj, Str spec){
     if(spec.empty()) return py_str(obj);
     char type;
     switch(spec.end()[-1]){
@@ -574,15 +613,18 @@ static std::string _opcode_argstr(VM* vm, Bytecode byte, const CodeObject* co){
         case OP_LOAD_NAME: case OP_LOAD_GLOBAL: case OP_LOAD_NONLOCAL: case OP_STORE_GLOBAL:
         case OP_LOAD_ATTR: case OP_LOAD_METHOD: case OP_STORE_ATTR: case OP_DELETE_ATTR:
         case OP_BEGIN_CLASS: case OP_GOTO:
-        case OP_DELETE_GLOBAL: case OP_INC_GLOBAL: case OP_DEC_GLOBAL: case OP_STORE_CLASS_ATTR:
+        case OP_DELETE_GLOBAL: case OP_INC_GLOBAL: case OP_DEC_GLOBAL: case OP_STORE_CLASS_ATTR: case OP_FOR_ITER_STORE_GLOBAL:
             argStr += _S(" (", StrName(byte.arg).sv(), ")").sv();
             break;
         case OP_LOAD_FAST: case OP_STORE_FAST: case OP_DELETE_FAST: case OP_INC_FAST: case OP_DEC_FAST:
+        case OP_FOR_ITER_STORE_FAST: case OP_LOAD_SUBSCR_FAST: case OP_STORE_SUBSCR_FAST:
             argStr += _S(" (", co->varnames[byte.arg].sv(), ")").sv();
             break;
         case OP_LOAD_FUNCTION:
             argStr += _S(" (", co->func_decls[byte.arg]->code->name, ")").sv();
             break;
+        case OP_LOAD_SMALL_INT: case OP_LOAD_SUBSCR_SMALL_INT:
+            argStr += _S(" (", (int)(byte.arg >> 2), ")").sv();
     }
     return argStr;
 }
@@ -595,7 +637,7 @@ Str VM::disassemble(CodeObject_ co){
 
     pod_vector<int> jumpTargets;
     for(auto byte : co->codes){
-        if(byte.op == OP_JUMP_ABSOLUTE || byte.op == OP_POP_JUMP_IF_FALSE || byte.op == OP_SHORTCUT_IF_FALSE_OR_POP || byte.op == OP_FOR_ITER){
+        if(byte.op == OP_JUMP_ABSOLUTE || byte.op == OP_POP_JUMP_IF_FALSE || byte.op == OP_SHORTCUT_IF_FALSE_OR_POP || byte.op == OP_LOOP_CONTINUE){
             jumpTargets.push_back(byte.arg);
         }
         if(byte.op == OP_GOTO){
@@ -642,7 +684,7 @@ Str VM::disassemble(CodeObject_ co){
 }
 
 #if PK_DEBUG_CEVAL_STEP
-void VM::_log_s_data(const char* title) {
+void VM::__log_s_data(const char* title) {
     if(_main == nullptr) return;
     if(callstack.empty()) return;
     SStream ss;
@@ -652,7 +694,7 @@ void VM::_log_s_data(const char* title) {
         if(f._sp_base == nullptr) PK_FATAL_ERROR();
         sp_bases[f._sp_base] += 1;
     }
-    FrameId frame = top_frame();
+    Frame* frame = &callstack.top();
     int line = frame->co->lines[frame->_ip];
     ss << frame->co->name << ":" << line << " [";
     for(PyObject** p=s_data.begin(); p!=s_data.end(); p++){
@@ -692,46 +734,51 @@ void VM::_log_s_data(const char* title) {
 }
 #endif
 
-void VM::init_builtin_types(){
+void VM::__init_builtin_types(){
     _all_types.push_back({heap._new<Type>(Type(1), Type(0)), -1, nullptr, "object", true});
     _all_types.push_back({heap._new<Type>(Type(1), Type(1)), 0, nullptr, "type", false});
 
-    if(tp_int != _new_type_object("int")) exit(-3);
-    if((tp_float != _new_type_object("float"))) exit(-3);
+    auto _new_type = [this](const char* name, Type base=0, bool subclass_enabled=false){
+        PyObject* obj = new_type_object(nullptr, name, base, subclass_enabled);
+        return PK_OBJ_GET(Type, obj);
+    };
 
-    if(tp_bool != _new_type_object("bool")) exit(-3);
-    if(tp_str != _new_type_object("str")) exit(-3);
-    if(tp_list != _new_type_object("list")) exit(-3);
-    if(tp_tuple != _new_type_object("tuple")) exit(-3);
+    if(tp_int != _new_type("int")) exit(-3);
+    if((tp_float != _new_type("float"))) exit(-3);
 
-    if(tp_slice != _new_type_object("slice")) exit(-3);
-    if(tp_range != _new_type_object("range")) exit(-3);
-    if(tp_module != _new_type_object("module")) exit(-3);
-    if(tp_function != _new_type_object("function")) exit(-3);
-    if(tp_native_func != _new_type_object("native_func")) exit(-3);
-    if(tp_bound_method != _new_type_object("bound_method")) exit(-3);
+    if(tp_bool != _new_type("bool")) exit(-3);
+    if(tp_str != _new_type("str")) exit(-3);
+    if(tp_list != _new_type("list")) exit(-3);
+    if(tp_tuple != _new_type("tuple")) exit(-3);
 
-    if(tp_super != _new_type_object("super")) exit(-3);
-    if(tp_exception != _new_type_object("Exception", 0, true)) exit(-3);
-    if(tp_bytes != _new_type_object("bytes")) exit(-3);
-    if(tp_mappingproxy != _new_type_object("mappingproxy")) exit(-3);
-    if(tp_dict != _new_type_object("dict")) exit(-3);
-    if(tp_property != _new_type_object("property")) exit(-3);
-    if(tp_star_wrapper != _new_type_object("_star_wrapper")) exit(-3);
+    if(tp_slice != _new_type("slice")) exit(-3);
+    if(tp_range != _new_type("range")) exit(-3);
+    if(tp_module != _new_type("module")) exit(-3);
+    if(tp_function != _new_type("function")) exit(-3);
+    if(tp_native_func != _new_type("native_func")) exit(-3);
+    if(tp_bound_method != _new_type("bound_method")) exit(-3);
 
-    if(tp_staticmethod != _new_type_object("staticmethod")) exit(-3);
-    if(tp_classmethod != _new_type_object("classmethod")) exit(-3);
+    if(tp_super != _new_type("super")) exit(-3);
+    if(tp_exception != _new_type("Exception", 0, true)) exit(-3);
+    if(tp_bytes != _new_type("bytes")) exit(-3);
+    if(tp_mappingproxy != _new_type("mappingproxy")) exit(-3);
+    if(tp_dict != _new_type("dict", 0, true)) exit(-3);  // dict can be subclassed
+    if(tp_property != _new_type("property")) exit(-3);
+    if(tp_star_wrapper != _new_type("_star_wrapper")) exit(-3);
+
+    if(tp_staticmethod != _new_type("staticmethod")) exit(-3);
+    if(tp_classmethod != _new_type("classmethod")) exit(-3);
 
     // SyntaxError and IndentationError must be created here
-    Type tp_syntax_error = _new_type_object("SyntaxError", tp_exception, true);
-    Type tp_indentation_error = _new_type_object("IndentationError", tp_syntax_error, true);
+    Type tp_syntax_error = _new_type("SyntaxError", tp_exception, true);
+    Type tp_indentation_error = _new_type("IndentationError", tp_syntax_error, true);
 
-    this->None = heap._new<Dummy>(_new_type_object("NoneType"));
-    this->NotImplemented = heap._new<Dummy>(_new_type_object("NotImplementedType"));
-    this->Ellipsis = heap._new<Dummy>(_new_type_object("ellipsis"));
+    this->None = heap._new<Dummy>(_new_type("NoneType"));
+    this->NotImplemented = heap._new<Dummy>(_new_type("NotImplementedType"));
+    this->Ellipsis = heap._new<Dummy>(_new_type("ellipsis"));
     this->True = heap._new<Dummy>(tp_bool);
     this->False = heap._new<Dummy>(tp_bool);
-    this->StopIteration = heap._new<Dummy>(_new_type_object("StopIterationType"));
+    this->StopIteration = _all_types[_new_type("StopIteration", tp_exception)].obj;
 
     this->builtins = new_module("builtins");
     
@@ -755,22 +802,23 @@ void VM::init_builtin_types(){
     builtins->attr().set("SyntaxError", _t(tp_syntax_error));
     builtins->attr().set("IndentationError", _t(tp_indentation_error));
 
-    post_init();
+    __post_init_builtin_types();
     this->_main = new_module("__main__");
 }
 
 // `heap.gc_scope_lock();` needed before calling this function
-void VM::_unpack_as_list(ArgsView args, List& list){
+void VM::__unpack_as_list(ArgsView args, List& list){
     for(PyObject* obj: args){
-        if(is_non_tagged_type(obj, tp_star_wrapper)){
+        if(is_type(obj, tp_star_wrapper)){
             const StarWrapper& w = _CAST(StarWrapper&, obj);
             // maybe this check should be done in the compile time
             if(w.level != 1) TypeError("expected level 1 star wrapper");
             PyObject* _0 = py_iter(w.obj);
-            PyObject* _1 = py_next(_0);
+            const PyTypeInfo* info = _inst_type_info(_0);
+            PyObject* _1 = _py_next(info, _0);
             while(_1 != StopIteration){
                 list.push_back(_1);
-                _1 = py_next(_0);
+                _1 = _py_next(info, _0);
             }
         }else{
             list.push_back(obj);
@@ -779,9 +827,9 @@ void VM::_unpack_as_list(ArgsView args, List& list){
 }
 
 // `heap.gc_scope_lock();` needed before calling this function
-void VM::_unpack_as_dict(ArgsView args, Dict& dict){
+void VM::__unpack_as_dict(ArgsView args, Dict& dict){
     for(PyObject* obj: args){
-        if(is_non_tagged_type(obj, tp_star_wrapper)){
+        if(is_type(obj, tp_star_wrapper)){
             const StarWrapper& w = _CAST(StarWrapper&, obj);
             // maybe this check should be done in the compile time
             if(w.level != 2) TypeError("expected level 2 star wrapper");
@@ -796,7 +844,7 @@ void VM::_unpack_as_dict(ArgsView args, Dict& dict){
 }
 
 
-void VM::_prepare_py_call(PyObject** buffer, ArgsView args, ArgsView kwargs, const FuncDecl_& decl){
+void VM::__prepare_py_call(PyObject** buffer, ArgsView args, ArgsView kwargs, const FuncDecl_& decl){
     const CodeObject* co = decl->code.get();
     int co_nlocals = co->varnames.size();
     int decl_argc = decl->args.size();
@@ -838,7 +886,7 @@ void VM::_prepare_py_call(PyObject** buffer, ArgsView args, ArgsView kwargs, con
     }
 
     for(int j=0; j<kwargs.size(); j+=2){
-        StrName key(CAST(int, kwargs[j]));
+        StrName key(_CAST(uint16_t, kwargs[j]));
         int index = decl->kw_to_index.try_get_likely_found(key);
         // if key is an explicit key, set as local variable
         if(index >= 0){
@@ -861,31 +909,81 @@ PyObject* VM::vectorcall(int ARGC, int KWARGC, bool op_call){
     // [callable, <self>, args..., kwargs...]
     //      ^p0                    ^p1      ^_sp
     PyObject* callable = p1[-(ARGC + 2)];
-    bool method_call = p1[-(ARGC + 1)] != PY_NULL;
+    Type callable_t = _tp(callable);
+
+    int method_call = p0[1] != PY_NULL;
 
     // handle boundmethod, do a patch
-    if(is_non_tagged_type(callable, tp_bound_method)){
+    if(callable_t == tp_bound_method){
         if(method_call) PK_FATAL_ERROR();
         BoundMethod& bm = PK_OBJ_GET(BoundMethod, callable);
         callable = bm.func;      // get unbound method
+        callable_t = _tp(callable);
         p1[-(ARGC + 2)] = bm.func;
         p1[-(ARGC + 1)] = bm.self;
-        method_call = true;
+        method_call = 1;
         // [unbound, self, args..., kwargs...]
     }
 
-    ArgsView args(p1 - ARGC - int(method_call), p1);
+    ArgsView args(p1 - ARGC - method_call, p1);
     ArgsView kwargs(p1, s_data._sp);
 
     PyObject** _base = args.begin();
     PyObject* buffer[PK_MAX_CO_VARNAMES];
 
-    if(is_non_tagged_type(callable, tp_native_func)){
+    if(callable_t == tp_function){
+        /*****************_py_call*****************/
+        // check stack overflow
+        if(s_data.is_overflow()) StackOverflowError();
+
+        const Function& fn = PK_OBJ_GET(Function, callable);
+        const CodeObject* co = fn.decl->code.get();
+        int co_nlocals = co->varnames.size();
+
+        switch(fn.decl->type){
+            case FuncType::UNSET: PK_FATAL_ERROR(); break;
+            case FuncType::NORMAL:
+                __prepare_py_call(buffer, args, kwargs, fn.decl);
+                // copy buffer back to stack
+                s_data.reset(_base + co_nlocals);
+                for(int j=0; j<co_nlocals; j++) _base[j] = buffer[j];
+                break;
+            case FuncType::SIMPLE:
+                if(args.size() != fn.decl->args.size()) TypeError(_S(co->name, "() takes ", fn.decl->args.size(), " positional arguments but ", args.size(), " were given"));
+                if(!kwargs.empty()) TypeError(_S(co->name, "() takes no keyword arguments"));
+                // [callable, <self>, args..., local_vars...]
+                //      ^p0                    ^p1      ^_sp
+                s_data.reset(_base + co_nlocals);
+                // initialize local variables to PY_NULL
+                for(PyObject** p=p1; p!=s_data._sp; p++) *p = PY_NULL;
+                break;
+            case FuncType::EMPTY:
+                if(args.size() != fn.decl->args.size()) TypeError(_S(co->name, "() takes ", fn.decl->args.size(), " positional arguments but ", args.size(), " were given"));
+                if(!kwargs.empty()) TypeError(_S(co->name, "() takes no keyword arguments"));
+                s_data.reset(p0);
+                return None;
+            case FuncType::GENERATOR:
+                __prepare_py_call(buffer, args, kwargs, fn.decl);
+                s_data.reset(p0);
+                return __py_generator(
+                    Frame(nullptr, co, fn._module, callable, nullptr),
+                    ArgsView(buffer, buffer + co_nlocals)
+                );
+        };
+
+        // simple or normal
+        callstack.emplace(p0, co, fn._module, callable, args.begin());
+        if(op_call) return PY_OP_CALL;
+        return __run_top_frame();
+        /*****************_py_call*****************/
+    }
+
+    if(callable_t == tp_native_func){
         const auto& f = PK_OBJ_GET(NativeFunc, callable);
         PyObject* ret;
         if(f.decl != nullptr){
             int co_nlocals = f.decl->code->varnames.size();
-            _prepare_py_call(buffer, args, kwargs, f.decl);
+            __prepare_py_call(buffer, args, kwargs, f.decl);
             // copy buffer back to stack
             s_data.reset(_base + co_nlocals);
             for(int j=0; j<co_nlocals; j++) _base[j] = buffer[j];
@@ -899,62 +997,12 @@ PyObject* VM::vectorcall(int ARGC, int KWARGC, bool op_call){
         return ret;
     }
 
-    if(is_non_tagged_type(callable, tp_function)){
-        /*****************_py_call*****************/
-        // callable must be a `function` object
-        if(s_data.is_overflow()) StackOverflowError();
-
-        const Function& fn = PK_OBJ_GET(Function, callable);
-        const FuncDecl_& decl = fn.decl;
-        const CodeObject* co = decl->code.get();
-        int co_nlocals = co->varnames.size();
-        if(decl->is_simple){
-            if(args.size() != decl->args.size()){
-                TypeError(_S(
-                    co->name, "() takes ", decl->args.size(), " positional arguments but ", args.size(), " were given"
-                ));
-            }
-            if(!kwargs.empty()){
-                TypeError(_S(co->name, "() takes no keyword arguments"));
-            }
-            s_data.reset(_base + co_nlocals);
-            int i = 0;
-            // prepare args
-            for(int index: decl->args) _base[index] = args[i++];
-            // set extra varnames to PY_NULL
-            for(int j=i; j<co_nlocals; j++) _base[j] = PY_NULL;
-            goto __FAST_CALL;
-        }
-
-        _prepare_py_call(buffer, args, kwargs, decl);
-        
-        if(co->is_generator){
-            s_data.reset(p0);
-            return _py_generator(
-                Frame(&s_data, nullptr, co, fn._module, callable),
-                ArgsView(buffer, buffer + co_nlocals)
-            );
-        }
-
-        // copy buffer back to stack
-        s_data.reset(_base + co_nlocals);
-        for(int j=0; j<co_nlocals; j++) _base[j] = buffer[j];
-
-__FAST_CALL:
-        callstack.emplace(&s_data, p0, co, fn._module, callable, FastLocals(co, args.begin()));
-        if(op_call) return PY_OP_CALL;
-        return _run_top_frame();
-        /*****************_py_call*****************/
-    }
-
-    if(is_non_tagged_type(callable, tp_type)){
+    if(callable_t == tp_type){
         // [type, NULL, args..., kwargs...]
         PyObject* new_f = find_name_in_mro(PK_OBJ_GET(Type, callable), __new__);
         PyObject* obj;
-#if PK_DEBUG_EXTRA_CHECK
-        PK_ASSERT(new_f != nullptr && !method_call);
-#endif
-        if(new_f == cached_object__new__) {
+        PK_DEBUG_ASSERT(new_f != nullptr && !method_call);
+        if(new_f == __cached_object_new) {
             // fast path for object.__new__
             obj = vm->heap.gcnew<DummyInstance>(PK_OBJ_GET(Type, callable));
         }else{
@@ -970,7 +1018,8 @@ __FAST_CALL:
         // __init__
         PyObject* self;
         callable = get_unbound_method(obj, __init__, &self, false);
-        if (self != PY_NULL) {
+        if (callable != nullptr) {
+            callable_t = _tp(callable);
             // replace `NULL` with `self`
             p1[-(ARGC + 2)] = callable;
             p1[-(ARGC + 1)] = self;
@@ -994,7 +1043,7 @@ __FAST_CALL:
         // [call_f, self, args..., kwargs...]
         return vectorcall(ARGC, KWARGC, false);
     }
-    TypeError(_type_name(vm, _tp(callable)).escape() + " object is not callable");
+    TypeError(_type_name(vm, callable_t).escape() + " object is not callable");
     PK_UNREACHABLE()
 }
 
@@ -1009,7 +1058,7 @@ void VM::delattr(PyObject *_0, StrName _name){
 PyObject* VM::getattr(PyObject* obj, StrName name, bool throw_err){
     Type objtype(0);
     // handle super() proxy
-    if(is_non_tagged_type(obj, tp_super)){
+    if(is_type(obj, tp_super)){
         const Super& super = PK_OBJ_GET(Super, obj);
         obj = super.first;
         objtype = super.second;
@@ -1019,7 +1068,7 @@ PyObject* VM::getattr(PyObject* obj, StrName name, bool throw_err){
     PyObject* cls_var = find_name_in_mro(objtype, name);
     if(cls_var != nullptr){
         // handle descriptor
-        if(is_non_tagged_type(cls_var, tp_property)){
+        if(is_type(cls_var, tp_property)){
             const Property& prop = PK_OBJ_GET(Property, cls_var);
             return call(prop.getter, obj);
         }
@@ -1073,7 +1122,7 @@ PyObject* VM::get_unbound_method(PyObject* obj, StrName name, PyObject** self, b
     *self = PY_NULL;
     Type objtype(0);
     // handle super() proxy
-    if(is_non_tagged_type(obj, tp_super)){
+    if(is_type(obj, tp_super)){
         const Super& super = PK_OBJ_GET(Super, obj);
         obj = super.first;
         objtype = super.second;
@@ -1085,7 +1134,7 @@ PyObject* VM::get_unbound_method(PyObject* obj, StrName name, PyObject** self, b
     if(fallback){
         if(cls_var != nullptr){
             // handle descriptor
-            if(is_non_tagged_type(cls_var, tp_property)){
+            if(is_type(cls_var, tp_property)){
                 const Property& prop = PK_OBJ_GET(Property, cls_var);
                 return call(prop.getter, obj);
             }
@@ -1141,7 +1190,7 @@ PyObject* VM::get_unbound_method(PyObject* obj, StrName name, PyObject** self, b
 void VM::setattr(PyObject* obj, StrName name, PyObject* value){
     Type objtype(0);
     // handle super() proxy
-    if(is_non_tagged_type(obj, tp_super)){
+    if(is_type(obj, tp_super)){
         Super& super = PK_OBJ_GET(Super, obj);
         obj = super.first;
         objtype = super.second;
@@ -1151,7 +1200,7 @@ void VM::setattr(PyObject* obj, StrName name, PyObject* value){
     PyObject* cls_var = find_name_in_mro(objtype, name);
     if(cls_var != nullptr){
         // handle descriptor
-        if(is_non_tagged_type(cls_var, tp_property)){
+        if(is_type(cls_var, tp_property)){
             const Property& prop = _CAST(Property&, cls_var);
             if(prop.setter != vm->None){
                 call(prop.setter, obj, value);
@@ -1189,10 +1238,7 @@ PyObject* VM::bind(PyObject* obj, const char* sig, const char* docstring, Native
         throw std::runtime_error("expected 1 function declaration");
     }
     FuncDecl_ decl = co->func_decls[0];
-    decl->signature = Str(sig);
-    if(docstring != nullptr){
-        decl->docstring = Str(docstring).strip();
-    }
+    decl->docstring = docstring;
     PyObject* f_obj = VAR(NativeFunc(fn, decl));
     PK_OBJ_GET(NativeFunc, f_obj).set_userdata(userdata);
 
@@ -1210,21 +1256,35 @@ PyObject* VM::bind(PyObject* obj, const char* sig, const char* docstring, Native
     return f_obj;
 }
 
-PyObject* VM::bind_property(PyObject* obj, Str name, NativeFuncC fget, NativeFuncC fset){
+PyObject* VM::bind_property(PyObject* obj, const char* name, NativeFuncC fget, NativeFuncC fset){
     PyObject* _0 = heap.gcnew<NativeFunc>(tp_native_func, fget, 1, false);
     PyObject* _1 = vm->None;
     if(fset != nullptr) _1 = heap.gcnew<NativeFunc>(tp_native_func, fset, 2, false);
-    Str signature = name;
-    int pos = name.index(":");
-    if(pos > 0) name = name.substr(0, pos).strip();
-    PyObject* prop = VAR(Property(_0, _1, signature));
-    obj->attr().set(name, prop);
+    std::string_view name_sv(name);
+    int pos = name_sv.find(':');
+    if(pos > 0) name_sv = name_sv.substr(0, pos);
+    PyObject* prop = VAR(Property(_0, _1));
+    obj->attr().set(StrName(name_sv), prop);
     return prop;
 }
 
-void VM::_builtin_error(StrName type){ _error(call(builtins->attr(type))); }
-void VM::_builtin_error(StrName type, PyObject* arg){ _error(call(builtins->attr(type), arg)); }
-void VM::_builtin_error(StrName type, const Str& msg){ _builtin_error(type, VAR(msg)); }
+void VM::__builtin_error(StrName type){ _error(call(builtins->attr(type))); }
+void VM::__builtin_error(StrName type, PyObject* arg){ _error(call(builtins->attr(type), arg)); }
+void VM::__builtin_error(StrName type, const Str& msg){ __builtin_error(type, VAR(msg)); }
+
+void VM::BinaryOptError(const char* op, PyObject* _0, PyObject* _1) {
+    StrName name_0 = _type_name(vm, _tp(_0));
+    StrName name_1 = _type_name(vm, _tp(_1));
+    TypeError(_S("unsupported operand type(s) for ", op, ": ", name_0.escape(), " and ", name_1.escape()));
+}
+
+void VM::AttributeError(PyObject* obj, StrName name){
+    if(isinstance(obj, vm->tp_type)){
+        __builtin_error("AttributeError", _S("type object ", _type_name(vm, PK_OBJ_GET(Type, obj)).escape(), " has no attribute ", name.escape()));
+    }else{
+        __builtin_error("AttributeError", _S(_type_name(vm, _tp(obj)).escape(), " object has no attribute ", name.escape()));
+    }
+}
 
 void VM::_error(PyObject* e_obj){
     PK_ASSERT(isinstance(e_obj, tp_exception))
@@ -1234,17 +1294,17 @@ void VM::_error(PyObject* e_obj){
         throw e;
     }
     PUSH(e_obj);
-    _raise();
+    __raise_exc();
 }
 
-void VM::_raise(bool re_raise){
-    Frame* frame = top_frame().get();
+void VM::__raise_exc(bool re_raise){
+    Frame* frame = &callstack.top();
     Exception& e = PK_OBJ_GET(Exception, s_data.top());
     if(!re_raise){
         e._ip_on_error = frame->_ip;
         e._code_on_error = (void*)frame->co;
     }
-    bool ok = frame->jump_to_exception_handler();
+    bool ok = frame->jump_to_exception_handler(&s_data);
 
     int actual_ip = frame->_ip;
     if(e._ip_on_error >= 0 && e._code_on_error == (void*)frame->co) actual_ip = e._ip_on_error;
@@ -1259,11 +1319,11 @@ void VM::_raise(bool re_raise){
 
 void ManagedHeap::mark() {
     for(PyObject* obj: _no_gc) PK_OBJ_MARK(obj);
-    for(auto& frame : vm->callstack.container()) frame._gc_mark();
+    vm->callstack.apply([](Frame& frame){ frame._gc_mark(); });
     for(PyObject* obj: vm->s_data) PK_OBJ_MARK(obj);
-    for(auto [_, co]: vm->_cached_codes) co->_gc_mark();
-    if(vm->_last_exception) PK_OBJ_MARK(vm->_last_exception);
-    if(vm->_curr_class) PK_OBJ_MARK(vm->_curr_class);
+    for(auto [_, co]: vm->__cached_codes) co->_gc_mark();
+    if(vm->__last_exception) PK_OBJ_MARK(vm->__last_exception);
+    if(vm->__curr_class) PK_OBJ_MARK(vm->__curr_class);
     if(vm->_c.error != nullptr) PK_OBJ_MARK(vm->_c.error);
     if(_gc_marker_ex) _gc_marker_ex(vm);
 }
@@ -1272,10 +1332,15 @@ StrName _type_name(VM *vm, Type type){
     return vm->_all_types[type].name;
 }
 
+void _gc_mark_namedict(NameDict* t){
+    t->apply([](StrName name, PyObject* obj){
+        PK_OBJ_MARK(obj);
+    });
+}
 
 void VM::bind__getitem__(Type type, PyObject* (*f)(VM*, PyObject*, PyObject*)){
     _all_types[type].m__getitem__ = f;
-    PyObject* nf = bind_method<1>(type, "__getitem__", [](VM* vm, ArgsView args){
+    PyObject* nf = bind_method<1>(type, __getitem__, [](VM* vm, ArgsView args){
         return lambda_get_userdata<PyObject*(*)(VM*, PyObject*, PyObject*)>(args.begin())(vm, args[0], args[1]);
     });
     PK_OBJ_GET(NativeFunc, nf).set_userdata(f);
@@ -1283,7 +1348,7 @@ void VM::bind__getitem__(Type type, PyObject* (*f)(VM*, PyObject*, PyObject*)){
 
 void VM::bind__setitem__(Type type, void (*f)(VM*, PyObject*, PyObject*, PyObject*)){
     _all_types[type].m__setitem__ = f;
-    PyObject* nf = bind_method<2>(type, "__setitem__", [](VM* vm, ArgsView args){
+    PyObject* nf = bind_method<2>(type, __setitem__, [](VM* vm, ArgsView args){
         lambda_get_userdata<void(*)(VM* vm, PyObject*, PyObject*, PyObject*)>(args.begin())(vm, args[0], args[1], args[2]);
         return vm->None;
     });
@@ -1292,18 +1357,60 @@ void VM::bind__setitem__(Type type, void (*f)(VM*, PyObject*, PyObject*, PyObjec
 
 void VM::bind__delitem__(Type type, void (*f)(VM*, PyObject*, PyObject*)){
     _all_types[type].m__delitem__ = f;
-    PyObject* nf = bind_method<1>(type, "__delitem__", [](VM* vm, ArgsView args){
+    PyObject* nf = bind_method<1>(type, __delitem__, [](VM* vm, ArgsView args){
         lambda_get_userdata<void(*)(VM*, PyObject*, PyObject*)>(args.begin())(vm, args[0], args[1]);
         return vm->None;
     });
     PK_OBJ_GET(NativeFunc, nf).set_userdata(f);
 }
 
+
+    PyObject* VM::__pack_next_retval(unsigned n){
+        if(n == 0) return StopIteration;
+        if(n == 1) return s_data.popx();
+        PyObject* retval = VAR(s_data.view(n).to_tuple());
+        s_data._sp -= n;
+        return retval;
+    }
+
+    void VM::bind__next__(Type type, unsigned (*f)(VM*, PyObject*)){                         \
+        _all_types[type].m__next__ = f;                                                   \
+        PyObject* nf = bind_method<0>(_t(type), __next__, [](VM* vm, ArgsView args){       \
+            int n = lambda_get_userdata<unsigned(*)(VM*, PyObject*)>(args.begin())(vm, args[0]);\
+            return vm->__pack_next_retval(n);                                               \
+        });                                                                             \
+        PK_OBJ_GET(NativeFunc, nf).set_userdata(f);                                        \
+    }
+
+    void VM::bind__next__(Type type, PyObject* (*f)(VM*, PyObject*)){
+        PyObject* nf = bind_method<0>(_t(type), __next__, [](VM* vm, ArgsView args){
+            auto f = lambda_get_userdata<PyObject*(*)(VM*, PyObject*)>(args.begin());
+            return f(vm, args[0]);
+        });
+        PK_OBJ_GET(NativeFunc, nf).set_userdata(f);
+    }
+
+#define BIND_UNARY_SPECIAL(name)                                                        \
+    void VM::bind##name(Type type, PyObject* (*f)(VM*, PyObject*)){                         \
+        _all_types[type].m##name = f;                                                   \
+        PyObject* nf = bind_method<0>(_t(type), name, [](VM* vm, ArgsView args){       \
+            return lambda_get_userdata<PyObject*(*)(VM*, PyObject*)>(args.begin())(vm, args[0]);\
+        });                                                                             \
+        PK_OBJ_GET(NativeFunc, nf).set_userdata(f);                                        \
+    }
+
+    BIND_UNARY_SPECIAL(__repr__)
+    BIND_UNARY_SPECIAL(__str__)
+    BIND_UNARY_SPECIAL(__iter__)
+    BIND_UNARY_SPECIAL(__neg__)
+    BIND_UNARY_SPECIAL(__invert__)
+#undef BIND_UNARY_SPECIAL
+
 void VM::bind__hash__(Type type, i64 (*f)(VM*, PyObject*)){
     PyObject* obj = _t(type);
     _all_types[type].m__hash__ = f;
-    PyObject* nf = bind_method<0>(obj, "__hash__", [](VM* vm, ArgsView args){
-        i64 ret = lambda_get_userdata<i64(*)(VM*, PyObject*)>(args.begin())(vm, args[0]);
+    PyObject* nf = bind_method<0>(obj, __hash__, [](VM* vm, ArgsView args){
+        i64 ret = lambda_get_userdata<decltype(f)>(args.begin())(vm, args[0]);
         return VAR(ret);
     });
     PK_OBJ_GET(NativeFunc, nf).set_userdata(f);
@@ -1312,12 +1419,47 @@ void VM::bind__hash__(Type type, i64 (*f)(VM*, PyObject*)){
 void VM::bind__len__(Type type, i64 (*f)(VM*, PyObject*)){
     PyObject* obj = _t(type);
     _all_types[type].m__len__ = f;
-    PyObject* nf = bind_method<0>(obj, "__len__", [](VM* vm, ArgsView args){
-        i64 ret = lambda_get_userdata<i64(*)(VM*, PyObject*)>(args.begin())(vm, args[0]);
+    PyObject* nf = bind_method<0>(obj, __len__, [](VM* vm, ArgsView args){
+        i64 ret = lambda_get_userdata<decltype(f)>(args.begin())(vm, args[0]);
         return VAR(ret);
     });
     PK_OBJ_GET(NativeFunc, nf).set_userdata(f);
 }
+
+
+#define BIND_BINARY_SPECIAL(name)                                                       \
+    void VM::bind##name(Type type, BinaryFuncC f){                                          \
+        _all_types[type].m##name = f;                                                   \
+        PyObject* nf = bind_method<1>(type, name, [](VM* vm, ArgsView args){           \
+            return lambda_get_userdata<BinaryFuncC>(args.begin())(vm, args[0], args[1]);\
+        });                                                                             \
+        PK_OBJ_GET(NativeFunc, nf).set_userdata(f);                                     \
+    }
+
+    BIND_BINARY_SPECIAL(__eq__)
+    BIND_BINARY_SPECIAL(__lt__)
+    BIND_BINARY_SPECIAL(__le__)
+    BIND_BINARY_SPECIAL(__gt__)
+    BIND_BINARY_SPECIAL(__ge__)
+    BIND_BINARY_SPECIAL(__contains__)
+
+    BIND_BINARY_SPECIAL(__add__)
+    BIND_BINARY_SPECIAL(__sub__)
+    BIND_BINARY_SPECIAL(__mul__)
+    BIND_BINARY_SPECIAL(__truediv__)
+    BIND_BINARY_SPECIAL(__floordiv__)
+    BIND_BINARY_SPECIAL(__mod__)
+    BIND_BINARY_SPECIAL(__pow__)
+    BIND_BINARY_SPECIAL(__matmul__)
+
+    BIND_BINARY_SPECIAL(__lshift__)
+    BIND_BINARY_SPECIAL(__rshift__)
+    BIND_BINARY_SPECIAL(__and__)
+    BIND_BINARY_SPECIAL(__or__)
+    BIND_BINARY_SPECIAL(__xor__)
+
+#undef BIND_BINARY_SPECIAL
+
 
 void Dict::_probe_0(PyObject *key, bool &ok, int &i) const{
     ok = false;
@@ -1352,8 +1494,171 @@ void NativeFunc::check_size(VM* vm, ArgsView args) const{
     }
 }
 
-PyObject* NativeFunc::call(VM *vm, ArgsView args) const {
-    return f(vm, args);
+#if PK_ENABLE_PROFILER
+void NextBreakpoint::_step(VM* vm){
+    int curr_callstack_size = vm->callstack.size();
+    int curr_lineno = vm->callstack.top().curr_lineno();
+    if(should_step_into){
+        if(curr_callstack_size != callstack_size || curr_lineno != lineno){
+            vm->__breakpoint();
+        }
+    }else{
+        if(curr_callstack_size == callstack_size) {
+            if(curr_lineno != lineno) vm->__breakpoint();
+        }else if(curr_callstack_size < callstack_size){
+            // returning
+            vm->__breakpoint();
+        }
+    }
+}
+#endif
+
+void VM::__pop_frame(){
+    s_data.reset(callstack.top()._sp_base);
+    callstack.pop();
+
+#if PK_ENABLE_PROFILER
+    if(!_next_breakpoint.empty() && callstack.size()<_next_breakpoint.callstack_size){
+        _next_breakpoint = NextBreakpoint();
+    }
+#endif
+}
+
+void VM::__breakpoint(){
+#if PK_ENABLE_PROFILER
+    _next_breakpoint = NextBreakpoint();
+
+    bool show_where = false;
+    bool show_headers = true;
+    
+    while(true){
+        std::vector<LinkedFrame*> frames;
+        LinkedFrame* lf = callstack._tail;
+        while(lf != nullptr){
+            frames.push_back(lf);
+            lf = lf->f_back;
+            if(frames.size() >= 4) break;
+        }
+
+        if(show_headers){
+            for(int i=frames.size()-1; i>=0; i--){
+                if(!show_where && i!=0) continue;
+
+                SStream ss;
+                Frame* frame = &frames[i]->frame;
+                int lineno = frame->curr_lineno();
+                ss << "File \"" << frame->co->src->filename << "\", line " << lineno;
+                if(frame->_callable){
+                    ss << ", in ";
+                    ss << PK_OBJ_GET(Function, frame->_callable).decl->code->name;
+                }
+                ss << '\n';
+                ss << "-> " << frame->co->src->get_line(lineno) << '\n';
+                stdout_write(ss.str());
+            }
+            show_headers = false;
+        }
+
+        vm->stdout_write("(Pdb) ");
+        Frame* frame_0 = &frames[0]->frame;
+
+        std::string line;
+        if(!std::getline(std::cin, line)){
+            stdout_write("--KeyboardInterrupt--\n");
+            continue;
+        }
+
+        if(line == "h" || line == "help"){
+            stdout_write("h, help: show this help message\n");
+            stdout_write("q, quit: exit the debugger\n");
+            stdout_write("n, next: execute next line\n");
+            stdout_write("s, step: step into\n");
+            stdout_write("w, where: show current stack frame\n");
+            stdout_write("c, continue: continue execution\n");
+            stdout_write("a, args: show local variables\n");
+            stdout_write("p, print <expr>: evaluate expression\n");
+            stdout_write("l, list: show lines around current line\n");
+            stderr_write("ll, longlist: show all lines\n");
+            stdout_write("!: execute statement\n");
+            continue;
+        }
+        if(line == "q" || line == "quit") {
+            vm->RuntimeError("pdb quit");
+            PK_UNREACHABLE()
+        }
+        if(line == "n" || line == "next"){
+            vm->_next_breakpoint = NextBreakpoint(vm->callstack.size(), frame_0->curr_lineno(), false);
+            break;
+        }
+        if(line == "s" || line == "step"){
+            vm->_next_breakpoint = NextBreakpoint(vm->callstack.size(), frame_0->curr_lineno(), true);
+            break;
+        }
+        if(line == "w" || line == "where"){
+            show_where = !show_where;
+            show_headers = true;
+            continue;
+        }
+        if(line == "c" || line == "continue") break;
+        if(line == "a" || line == "args"){
+            int i = 0;
+            for(PyObject* obj: frame_0->_locals){
+                if(obj == PY_NULL) continue;
+                StrName name = frame_0->co->varnames[i++];
+                stdout_write(_S(name.sv(), " = ", CAST(Str&, vm->py_repr(obj)), '\n'));
+            }
+            continue;
+        }
+
+        bool is_list = line == "l" || line == "list";
+        bool is_longlist = line == "ll" || line == "longlist";
+
+        if(is_list || is_longlist){
+            if(frame_0->co->src->is_precompiled) continue;
+            int lineno = frame_0->curr_lineno();
+            int start, end;
+
+            if(is_list){
+                int max_line = frame_0->co->src->line_starts.size() + 1;
+                start = std::max(1, lineno-5);
+                end = std::min(max_line, lineno+5);
+            }else{
+                start = frame_0->co->start_line;
+                end = frame_0->co->end_line;
+                if(start == -1 || end == -1) continue;
+            }
+            
+            SStream ss;
+            int max_width = std::to_string(end).size();
+            for(int i=start; i<=end; i++){
+                int spaces = max_width - std::to_string(i).size();
+                ss << std::string(spaces, ' ') << std::to_string(i);
+                if(i == lineno) ss << "  -> ";
+                else ss << "     ";
+                ss << frame_0->co->src->get_line(i) << '\n';
+            }
+            stdout_write(ss.str());
+            continue;
+        }
+        
+        int space = line.find_first_of(' ');
+        if(space != -1){
+            std::string cmd = line.substr(0, space);
+            std::string arg = line.substr(space+1);
+            if(arg.empty()) continue;   // ignore empty command
+            if(cmd == "p" || cmd == "print"){
+                CodeObject_ code = compile(arg, "<stdin>", EVAL_MODE, true);
+                PyObject* retval = vm->_exec(code.get(), frame_0->_module, frame_0->_callable, frame_0->_locals);
+                stdout_write(CAST(Str&, vm->py_repr(retval)));
+                stdout_write("\n");
+            }else if(cmd == "!"){
+                CodeObject_ code = compile(arg, "<stdin>", EXEC_MODE, true);
+                vm->_exec(code.get(), frame_0->_module, frame_0->_callable, frame_0->_locals);
+            }
+            continue;
+        }
+    }
+#endif
 }
 
 }   // namespace pkpy

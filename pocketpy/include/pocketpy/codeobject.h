@@ -13,12 +13,6 @@ enum Opcode: uint8_t {
     #undef OPCODE
 };
 
-inline const char* OP_NAMES[] = {
-    #define OPCODE(name) #name,
-    #include "opcodes.h"
-    #undef OPCODE
-};
-
 struct Bytecode{
     uint8_t op;
     uint16_t arg;
@@ -65,7 +59,6 @@ struct CodeObject {
 
     std::shared_ptr<SourceData> src;
     Str name;
-    bool is_generator;
 
     std::vector<Bytecode> codes;
     std::vector<int> iblocks;       // block index for each bytecode
@@ -90,6 +83,14 @@ struct CodeObject {
     void _gc_mark() const;
 };
 
+enum class FuncType{
+    UNSET,
+    NORMAL,
+    SIMPLE,
+    EMPTY,
+    GENERATOR,
+};
+
 struct FuncDecl {
     struct KwArg {
         int index;              // index in co->varnames
@@ -105,9 +106,9 @@ struct FuncDecl {
     int starred_kwarg = -1;     // index in co->varnames, -1 if no **kwarg
     bool nested = false;        // whether this function is nested
 
-    Str signature;              // signature of this function
-    Str docstring;              // docstring of this function
-    bool is_simple;
+    const char* docstring;      // docstring of this function (weak ref)
+
+    FuncType type = FuncType::UNSET;
 
     NameDictInt kw_to_index;
 
@@ -135,9 +136,7 @@ struct UserData{
     T get() const{
         static_assert(std::is_trivially_copyable_v<T>);
         static_assert(sizeof(T) <= sizeof(data));
-#if PK_DEBUG_EXTRA_CHECK
-        PK_ASSERT(!empty);
-#endif
+        PK_DEBUG_ASSERT(!empty);
         return reinterpret_cast<const T&>(data);
     }
 };
@@ -165,7 +164,7 @@ struct NativeFunc {
     NativeFunc(NativeFuncC f, FuncDecl_ decl);
 
     void check_size(VM* vm, ArgsView args) const;
-    PyObject* call(VM* vm, ArgsView args) const;
+    PyObject* call(VM* vm, ArgsView args) const { return f(vm, args); }
 };
 
 struct Function{
@@ -187,11 +186,7 @@ struct Py_<Function> final: PyObject {
     }
     void _obj_gc_mark() override {
         _value.decl->_gc_mark();
-        if(_value._closure != nullptr) gc_mark_namedict(*_value._closure);
-    }
-
-    void* _value_ptr() override {
-        return &_value;
+        if(_value._closure != nullptr) _gc_mark_namedict(_value._closure.get());
     }
 };
 
@@ -206,9 +201,6 @@ struct Py_<NativeFunc> final: PyObject {
         if(_value.decl != nullptr){
             _value.decl->_gc_mark();
         }
-    }
-    void* _value_ptr() override {
-        return &_value;
     }
 };
 
