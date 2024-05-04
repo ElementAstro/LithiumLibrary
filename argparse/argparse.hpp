@@ -36,6 +36,7 @@ SOFTWARE.
 #include <algorithm>
 #include <any>
 #include <array>
+#include <set>
 #include <charconv>
 #include <cstdlib>
 #include <functional>
@@ -606,7 +607,7 @@ class Argument {
       : m_accepts_optional_like_value(false),
         m_is_optional((is_optional(a[I], prefix_chars) || ...)),
         m_is_required(false), m_is_repeatable(false), m_is_used(false),
-        m_prefix_chars(prefix_chars) {
+        m_is_hidden(false), m_prefix_chars(prefix_chars) {
     ((void)m_names.emplace_back(a[I]), ...);
     std::sort(
         m_names.begin(), m_names.end(), [](const auto &lhs, const auto &rhs) {
@@ -689,8 +690,108 @@ public:
     return *this;
   }
 
+  auto &store_into(bool &var) {
+    flag();
+    if (m_default_value.has_value()) {
+      var = std::any_cast<bool>(m_default_value);
+    }
+    action([&var](const auto & /*unused*/) { var = true; });
+    return *this;
+  }
+
+  template <typename T, typename std::enable_if<std::is_integral<T>::value>::type * = nullptr>
+  auto &store_into(T &var) {
+    if (m_default_value.has_value()) {
+      var = std::any_cast<T>(m_default_value);
+    }
+    action([&var](const auto &s) {
+      var = details::parse_number<T, details::radix_10>()(s);
+    });
+    return *this;
+  }
+
+  auto &store_into(double &var) {
+    if (m_default_value.has_value()) {
+      var = std::any_cast<double>(m_default_value);
+    }
+    action([&var](const auto &s) {
+      var = details::parse_number<double, details::chars_format::general>()(s);
+    });
+    return *this;
+  }
+
+  auto &store_into(std::string &var) {
+    if (m_default_value.has_value()) {
+      var = std::any_cast<std::string>(m_default_value);
+    }
+    action([&var](const std::string &s) { var = s; });
+    return *this;
+  }
+
+  auto &store_into(std::vector<std::string> &var) {
+    if (m_default_value.has_value()) {
+      var = std::any_cast<std::vector<std::string>>(m_default_value);
+    }
+    action([this, &var](const std::string &s) {
+      if (!m_is_used) {
+        var.clear();
+      }
+      m_is_used = true;
+      var.push_back(s);
+    });
+    return *this;
+  }
+
+  auto &store_into(std::vector<int> &var) {
+    if (m_default_value.has_value()) {
+      var = std::any_cast<std::vector<int>>(m_default_value);
+    }
+    action([this, &var](const std::string &s) {
+      if (!m_is_used) {
+        var.clear();
+      }
+      m_is_used = true;
+      var.push_back(details::parse_number<int, details::radix_10>()(s));
+    });
+    return *this;
+  }
+
+  auto &store_into(std::set<std::string> &var) {
+    if (m_default_value.has_value()) {
+      var = std::any_cast<std::set<std::string>>(m_default_value);
+    }
+    action([this, &var](const std::string &s) {
+      if (!m_is_used) {
+        var.clear();
+      }
+      m_is_used = true;
+      var.insert(s);
+    });
+    return *this;
+  }
+
+  auto &store_into(std::set<int> &var) {
+    if (m_default_value.has_value()) {
+      var = std::any_cast<std::set<int>>(m_default_value);
+    }
+    action([this, &var](const std::string &s) {
+      if (!m_is_used) {
+        var.clear();
+      }
+      m_is_used = true;
+      var.insert(details::parse_number<int, details::radix_10>()(s));
+    });
+    return *this;
+  }
+
   auto &append() {
     m_is_repeatable = true;
+    return *this;
+  }
+
+  // Cause the argument to be invisible in usage and help
+  auto &hidden() {
+    m_is_hidden = true;
     return *this;
   }
 
@@ -846,13 +947,17 @@ public:
     }
   }
 
+  /* The dry_run parameter can be set to true to avoid running the actions,
+   * and setting m_is_used. This may be used by a pre-processing step to do
+   * a first iteration over arguments.
+   */
   template <typename Iterator>
   Iterator consume(Iterator start, Iterator end,
-                   std::string_view used_name = {}) {
+                   std::string_view used_name = {}, bool dry_run = false) {
     if (!m_is_repeatable && m_is_used) {
-      throw std::runtime_error("Duplicate argument");
+      throw std::runtime_error(
+          std::string("Duplicate argument ").append(used_name));
     }
-    m_is_used = true;
     m_used_name = used_name;
 
     if (m_choices.has_value()) {
@@ -873,8 +978,11 @@ public:
     const auto num_args_min = m_num_args_range.get_min();
     std::size_t dist = 0;
     if (num_args_max == 0) {
-      m_values.emplace_back(m_implicit_value);
-      std::visit([](const auto &f) { f({}); }, m_action);
+      if (!dry_run) {
+        m_values.emplace_back(m_implicit_value);
+        std::visit([](const auto &f) { f({}); }, m_action);
+        m_is_used = true;
+      }
       return start;
     }
     if ((dist = static_cast<std::size_t>(std::distance(start, end))) >=
@@ -911,10 +1019,16 @@ public:
         Iterator first, last;
         Argument &self;
       };
-      std::visit(ActionApply{start, end, *this}, m_action);
+      if (!dry_run) {
+        std::visit(ActionApply{start, end, *this}, m_action);
+        m_is_used = true;
+      }
       return end;
     }
     if (m_default_value.has_value()) {
+      if (!dry_run) {
+        m_is_used = true;
+      }
       return start;
     }
     throw std::runtime_error("Too few arguments for '" +
@@ -985,12 +1099,16 @@ public:
     const std::string metavar = !m_metavar.empty() ? m_metavar : "VAR";
     if (m_num_args_range.get_max() > 0) {
       usage << " " << metavar;
-      if (m_num_args_range.get_max() > 1) {
+      if (m_num_args_range.get_max() > 1 &&
+          m_metavar.find("> <") == std::string::npos) {
         usage << "...";
       }
     }
     if (!m_is_required) {
       usage << "]";
+    }
+    if (m_is_repeatable) {
+      usage << "...";
     }
     return usage.str();
   }
@@ -1040,6 +1158,11 @@ public:
           argument.m_num_args_range == NArgsRange{1, 1}) {
         name_stream << " " << argument.m_metavar;
       }
+      else if (!argument.m_metavar.empty() &&
+               argument.m_num_args_range.get_min() == argument.m_num_args_range.get_max() &&
+               argument.m_metavar.find("> <") != std::string::npos) {
+        name_stream << " " << argument.m_metavar;
+      }
     }
 
     // align multiline help message
@@ -1078,11 +1201,20 @@ public:
     }
     stream << argument.m_num_args_range;
 
+    bool add_space = false;
     if (argument.m_default_value.has_value() &&
         argument.m_num_args_range != NArgsRange{0, 0}) {
       stream << "[default: " << argument.m_default_value_repr << "]";
+      add_space = true;
     } else if (argument.m_is_required) {
       stream << "[required]";
+      add_space = true;
+    }
+    if (argument.m_is_repeatable) {
+      if (add_space) {
+        stream << " ";
+      }
+      stream << "[may be repeated]";
     }
     stream << "\n";
     return stream;
@@ -1107,6 +1239,31 @@ public:
                           return std::any_cast<const ValueType &>(a) == b;
                         });
     }
+  }
+
+  /*
+   * positional:
+   *    _empty_
+   *    '-'
+   *    '-' decimal-literal
+   *    !'-' anything
+   */
+  static bool is_positional(std::string_view name,
+                            std::string_view prefix_chars) {
+    auto first = lookahead(name);
+
+    if (first == eof) {
+      return true;
+    }
+    if (prefix_chars.find(static_cast<char>(first)) !=
+                          std::string_view::npos) {
+      name.remove_prefix(1);
+      if (name.empty()) {
+        return true;
+      }
+      return is_decimal_literal(name);
+    }
+    return true;
   }
 
 private:
@@ -1345,30 +1502,6 @@ private:
   }
 
   /*
-   * positional:
-   *    _empty_
-   *    '-'
-   *    '-' decimal-literal
-   *    !'-' anything
-   */
-  static bool is_positional(std::string_view name,
-                            std::string_view prefix_chars) {
-    auto first = lookahead(name);
-
-    if (first == eof) {
-      return true;
-    } else if (prefix_chars.find(static_cast<char>(first)) !=
-               std::string_view::npos) {
-      name.remove_prefix(1);
-      if (name.empty()) {
-        return true;
-      }
-      return is_decimal_literal(name);
-    }
-    return true;
-  }
-
-  /*
    * Get argument value given a type
    * @throws std::logic_error in case of incompatible types
    */
@@ -1421,6 +1554,10 @@ private:
     return result;
   }
 
+  void set_usage_newline_counter(int i) { m_usage_newline_counter = i; }
+
+  void set_group_idx(std::size_t i) { m_group_idx = i; }
+
   std::vector<std::string> m_names;
   std::string_view m_used_name;
   std::string m_help;
@@ -1444,7 +1581,10 @@ private:
   bool m_is_required : 1;
   bool m_is_repeatable : 1;
   bool m_is_used : 1;
+  bool m_is_hidden : 1;            // if set, does not appear in usage or help
   std::string_view m_prefix_chars; // ArgumentParser has the prefix_chars
+  int m_usage_newline_counter = 0;
+  std::size_t m_group_idx = 0;
 };
 
 class ArgumentParser {
@@ -1520,6 +1660,8 @@ public:
       m_positional_arguments.splice(std::cend(m_positional_arguments),
                                     m_optional_arguments, argument);
     }
+    argument->set_usage_newline_counter(m_usage_newline_counter);
+    argument->set_group_idx(m_group_names.size());
 
     index_argument(argument);
     return *argument;
@@ -1548,6 +1690,8 @@ public:
     template <typename... Targs> Argument &add_argument(Targs... f_args) {
       auto &argument = m_parent.add_argument(std::forward<Targs>(f_args)...);
       m_elements.push_back(&argument);
+      argument.set_usage_newline_counter(m_parent.m_usage_newline_counter);
+      argument.set_group_idx(m_parent.m_group_names.size());
       return argument;
     }
 
@@ -1581,6 +1725,23 @@ public:
     return *this;
   }
 
+  // Ask for the next optional arguments to be displayed on a separate
+  // line in usage() output. Only effective if set_usage_max_line_width() is
+  // also used.
+  ArgumentParser &add_usage_newline() {
+    ++m_usage_newline_counter;
+    return *this;
+  }
+
+  // Ask for the next optional arguments to be displayed in a separate section
+  // in usage() and help (<< *this) output.
+  // For usage(), this is only effective if set_usage_max_line_width() is
+  // also used.
+  ArgumentParser &add_group(std::string group_name) {
+    m_group_names.emplace_back(std::move(group_name));
+    return *this;
+  }
+
   ArgumentParser &add_description(std::string description) {
     m_description = std::move(description);
     return *this;
@@ -1589,6 +1750,21 @@ public:
   ArgumentParser &add_epilog(std::string epilog) {
     m_epilog = std::move(epilog);
     return *this;
+  }
+
+  // Add a un-documented/hidden alias for an argument.
+  // Ideally we'd want this to be a method of Argument, but Argument
+  // does not own its owing ArgumentParser.
+  ArgumentParser &add_hidden_alias_for(Argument &arg, std::string_view alias) {
+    for (auto it = m_optional_arguments.begin();
+         it != m_optional_arguments.end(); ++it) {
+      if (&(*it) == &arg) {
+        m_argument_map.insert_or_assign(std::string(alias), it);
+        return *this;
+      }
+    }
+    throw std::logic_error(
+        "Argument is not an optional argument of this parser");
   }
 
   /* Getter for arguments and subparsers.
@@ -1785,23 +1961,43 @@ public:
       stream << parser.m_description << "\n\n";
     }
 
-    if (!parser.m_positional_arguments.empty()) {
+    const bool has_visible_positional_args = std::find_if(
+      parser.m_positional_arguments.begin(),
+      parser.m_positional_arguments.end(),
+      [](const auto &argument) {
+      return !argument.m_is_hidden; }) !=
+      parser.m_positional_arguments.end();
+    if (has_visible_positional_args) {
       stream << "Positional arguments:\n";
     }
 
     for (const auto &argument : parser.m_positional_arguments) {
-      stream.width(static_cast<std::streamsize>(longest_arg_length));
-      stream << argument;
+      if (!argument.m_is_hidden) {
+        stream.width(static_cast<std::streamsize>(longest_arg_length));
+        stream << argument;
+      }
     }
 
     if (!parser.m_optional_arguments.empty()) {
-      stream << (parser.m_positional_arguments.empty() ? "" : "\n")
+      stream << (!has_visible_positional_args ? "" : "\n")
              << "Optional arguments:\n";
     }
 
     for (const auto &argument : parser.m_optional_arguments) {
-      stream.width(static_cast<std::streamsize>(longest_arg_length));
-      stream << argument;
+      if (argument.m_group_idx == 0 && !argument.m_is_hidden) {
+        stream.width(static_cast<std::streamsize>(longest_arg_length));
+        stream << argument;
+      }
+    }
+
+    for (size_t i_group = 0; i_group < parser.m_group_names.size(); ++i_group) {
+      stream << "\n" << parser.m_group_names[i_group] << " (detailed usage):\n";
+      for (const auto &argument : parser.m_optional_arguments) {
+        if (argument.m_group_idx == i_group + 1 && !argument.m_is_hidden) {
+          stream.width(static_cast<std::streamsize>(longest_arg_length));
+          stream << argument;
+        }
+      }
     }
 
     bool has_visible_subcommands = std::any_of(
@@ -1840,24 +2036,147 @@ public:
     return out;
   }
 
+  // Sets the maximum width for a line of the Usage message
+  ArgumentParser &set_usage_max_line_width(size_t w) {
+    this->m_usage_max_line_width = w;
+    return *this;
+  }
+
+  // Asks to display arguments of mutually exclusive group on separate lines in
+  // the Usage message
+  ArgumentParser &set_usage_break_on_mutex() {
+    this->m_usage_break_on_mutex = true;
+    return *this;
+  }
+
   // Format usage part of help only
   auto usage() const -> std::string {
     std::stringstream stream;
 
-    stream << "Usage: " << this->m_program_name;
+    std::string curline("Usage: ");
+    curline += this->m_program_name;
+    const bool multiline_usage =
+        this->m_usage_max_line_width < std::numeric_limits<std::size_t>::max();
+    const size_t indent_size = curline.size();
 
-    // Add any options inline here
-    for (const auto &argument : this->m_optional_arguments) {
-      stream << " " << argument.get_inline_usage();
+    const auto deal_with_options_of_group = [&](std::size_t group_idx) {
+      bool found_options = false;
+      // Add any options inline here
+      const MutuallyExclusiveGroup *cur_mutex = nullptr;
+      int usage_newline_counter = -1;
+      for (const auto &argument : this->m_optional_arguments) {
+        if (argument.m_is_hidden) {
+          continue;
+        }
+        if (multiline_usage) {
+          if (argument.m_group_idx != group_idx) {
+            continue;
+          }
+          if (usage_newline_counter != argument.m_usage_newline_counter) {
+            if (usage_newline_counter >= 0) {
+              if (curline.size() > indent_size) {
+                stream << curline << std::endl;
+                curline = std::string(indent_size, ' ');
+              }
+            }
+            usage_newline_counter = argument.m_usage_newline_counter;
+          }
+        }
+        found_options = true;
+        const std::string arg_inline_usage = argument.get_inline_usage();
+        const MutuallyExclusiveGroup *arg_mutex =
+            get_belonging_mutex(&argument);
+        if ((cur_mutex != nullptr) && (arg_mutex == nullptr)) {
+          curline += ']';
+          if (this->m_usage_break_on_mutex) {
+            stream << curline << std::endl;
+            curline = std::string(indent_size, ' ');
+          }
+        } else if ((cur_mutex == nullptr) && (arg_mutex != nullptr)) {
+          if ((this->m_usage_break_on_mutex && curline.size() > indent_size) ||
+              curline.size() + 3 + arg_inline_usage.size() >
+                  this->m_usage_max_line_width) {
+            stream << curline << std::endl;
+            curline = std::string(indent_size, ' ');
+          }
+          curline += " [";
+        } else if ((cur_mutex != nullptr) && (arg_mutex != nullptr)) {
+          if (cur_mutex != arg_mutex) {
+            curline += ']';
+            if (this->m_usage_break_on_mutex ||
+                curline.size() + 3 + arg_inline_usage.size() >
+                    this->m_usage_max_line_width) {
+              stream << curline << std::endl;
+              curline = std::string(indent_size, ' ');
+            }
+            curline += " [";
+          } else {
+            curline += '|';
+          }
+        }
+        cur_mutex = arg_mutex;
+        if (curline.size() + 1 + arg_inline_usage.size() >
+            this->m_usage_max_line_width) {
+          stream << curline << std::endl;
+          curline = std::string(indent_size, ' ');
+          curline += " ";
+        } else if (cur_mutex == nullptr) {
+          curline += " ";
+        }
+        curline += arg_inline_usage;
+      }
+      if (cur_mutex != nullptr) {
+        curline += ']';
+      }
+      return found_options;
+    };
+
+    const bool found_options = deal_with_options_of_group(0);
+
+    if (found_options && multiline_usage &&
+        !this->m_positional_arguments.empty()) {
+      stream << curline << std::endl;
+      curline = std::string(indent_size, ' ');
     }
     // Put positional arguments after the optionals
     for (const auto &argument : this->m_positional_arguments) {
-      if (!argument.m_metavar.empty()) {
-        stream << " " << argument.m_metavar;
+      if (argument.m_is_hidden) {
+        continue;
+      }
+      const std::string pos_arg = !argument.m_metavar.empty()
+                                      ? argument.m_metavar
+                                      : argument.m_names.front();
+      if (curline.size() + 1 + pos_arg.size() > this->m_usage_max_line_width) {
+        stream << curline << std::endl;
+        curline = std::string(indent_size, ' ');
+      }
+      curline += " ";
+      if (argument.m_num_args_range.get_min() == 0 &&
+          !argument.m_num_args_range.is_right_bounded()) {
+        curline += "[";
+        curline += pos_arg;
+        curline += "]...";
+      } else if (argument.m_num_args_range.get_min() == 1 &&
+                 !argument.m_num_args_range.is_right_bounded()) {
+        curline += pos_arg;
+        curline += "...";
       } else {
-        stream << " " << argument.m_names.front();
+        curline += pos_arg;
       }
     }
+
+    if (multiline_usage) {
+      // Display options of other groups
+      for (std::size_t i = 0; i < m_group_names.size(); ++i) {
+        stream << curline << std::endl << std::endl;
+        stream << m_group_names[i] << ":" << std::endl;
+        curline = std::string(indent_size, ' ');
+        deal_with_options_of_group(i + 1);
+      }
+    }
+
+    stream << curline;
+
     // Put subcommands after positional arguments
     if (!m_subparser_map.empty()) {
       stream << " {";
@@ -1898,7 +2217,17 @@ public:
 
   void set_suppress(bool suppress) { m_suppress = suppress; }
 
-private:
+protected:
+  const MutuallyExclusiveGroup *get_belonging_mutex(const Argument *arg) const {
+    for (const auto &mutex : m_mutually_exclusive_groups) {
+      if (std::find(mutex.m_elements.begin(), mutex.m_elements.end(), arg) !=
+          mutex.m_elements.end()) {
+        return &mutex;
+      }
+    }
+    return nullptr;
+  }
+
   bool is_valid_prefix_char(char c) const {
     return m_prefix_chars.find(c) != std::string::npos;
   }
@@ -2037,6 +2366,22 @@ private:
           }
         }
         auto argument = positional_argument_it++;
+
+        // Deal with the situation of <positional_arg1>... <positional_arg2>
+        if (argument->m_num_args_range.get_min() == 1 &&
+            argument->m_num_args_range.get_max() == (std::numeric_limits<std::size_t>::max)() &&
+            positional_argument_it != std::end(m_positional_arguments) &&
+            std::next(positional_argument_it) == std::end(m_positional_arguments) &&
+            positional_argument_it->m_num_args_range.get_min() == 1 &&
+            positional_argument_it->m_num_args_range.get_max() == 1 ) {
+          if (std::next(it) != end) {
+            positional_argument_it->consume(std::prev(end), end);
+            end = std::prev(end);
+          } else {
+            throw std::runtime_error("Missing " + positional_argument_it->m_names.front());
+          }
+        }
+
         it = argument->consume(it, end);
         continue;
       }
@@ -2188,6 +2533,10 @@ private:
   std::map<std::string, bool> m_subparser_used;
   std::vector<MutuallyExclusiveGroup> m_mutually_exclusive_groups;
   bool m_suppress = false;
+  std::size_t m_usage_max_line_width = std::numeric_limits<std::size_t>::max();
+  bool m_usage_break_on_mutex = false;
+  int m_usage_newline_counter = 0;
+  std::vector<std::string> m_group_names;
 };
 
 } // namespace argparse
