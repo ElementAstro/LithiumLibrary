@@ -1,4 +1,7 @@
 #include "httplib.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 namespace httplib {
 
 /*
@@ -431,10 +434,13 @@ bool mmap::open(const char *path) {
   for (size_t i = 0; i < strlen(path); i++) {
     wpath += path[i];
   }
-
+#if defined(__MINGW64__)
+  hFile_ = ::CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+#else
   hFile_ = ::CreateFile2(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ,
                          OPEN_EXISTING, NULL);
-
+#endif
   if (hFile_ == INVALID_HANDLE_VALUE) { return false; }
 
   LARGE_INTEGER size{};

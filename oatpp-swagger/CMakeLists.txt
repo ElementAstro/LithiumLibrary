@@ -1,16 +1,17 @@
 
 add_library(oatpp-swagger
-        AsyncController.hpp
-        Controller.hpp
-        ControllerPaths.hpp
-        Generator.cpp
-        Generator.hpp
-        Model.hpp
-        Resources.cpp
-        Resources.hpp
-        Types.cpp
-        Types.hpp
-        oas3/Model.hpp)
+        oatpp-swagger/AsyncController.hpp
+        oatpp-swagger/Controller.hpp
+        oatpp-swagger/ControllerPaths.hpp
+        oatpp-swagger/Generator.cpp
+        oatpp-swagger/Generator.hpp
+        oatpp-swagger/Model.hpp
+        oatpp-swagger/Resources.cpp
+        oatpp-swagger/Resources.hpp
+        oatpp-swagger/Types.cpp
+        oatpp-swagger/Types.hpp
+        oatpp-swagger/oas3/Model.hpp
+)
 
 set_target_properties(oatpp-swagger PROPERTIES
         CXX_STANDARD 11

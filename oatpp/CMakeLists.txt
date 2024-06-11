@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 
-file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/core/base/Environment.hpp" OATPP_VERSION_MACRO REGEX "#define OATPP_VERSION \"[0-9]+.[0-9]+.[0-9]+\"$")
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/oatpp/core/base/Environment.hpp" OATPP_VERSION_MACRO REGEX "#define OATPP_VERSION \"[0-9]+.[0-9]+.[0-9]+\"$")
 string(REGEX REPLACE "#define OATPP_VERSION \"([0-9]+.[0-9]+.[0-9]+)\"$" "\\1" oatpp_VERSION "${OATPP_VERSION_MACRO}")
 
 ###################################################################################################
@@ -14,7 +14,7 @@ set(OATPP_THIS_MODULE_VERSION ${oatpp_VERSION}) ## version of the module (also s
 
 project(oatpp VERSION ${OATPP_THIS_MODULE_VERSION} LANGUAGES CXX)
 
-option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(OATPP_INSTALL "Create installation target for oat++" ON)
 option(OATPP_BUILD_TESTS "Create test target for oat++" ON)
 option(OATPP_LINK_TEST_LIBRARY "Link oat++ test library" ON)
@@ -49,9 +49,14 @@ option(OATPP_DISABLE_LOGI "DISABLE logs priority I" OFF)
 option(OATPP_DISABLE_LOGW "DISABLE logs priority W" OFF)
 option(OATPP_DISABLE_LOGE "DISABLE logs priority E" OFF)
 
-# message("-- OATPP_DISABLE_ENV_OBJECT_COUNTERS=${OATPP_DISABLE_ENV_OBJECT_COUNTERS}")
-#message("-- OATPP_THREAD_HARDWARE_CONCURRENCY=${OATPP_THREAD_HARDWARE_CONCURRENCY}")
-# message("-- OATPP_COMPAT_BUILD_NO_THREAD_LOCAL=${OATPP_COMPAT_BUILD_NO_THREAD_LOCAL}")
+## Print config ##################################################################################
+
+message("\n############################################################################")
+message("## oatpp module compilation config:\n")
+
+message("OATPP_DISABLE_ENV_OBJECT_COUNTERS=${OATPP_DISABLE_ENV_OBJECT_COUNTERS}")
+message("OATPP_THREAD_HARDWARE_CONCURRENCY=${OATPP_THREAD_HARDWARE_CONCURRENCY}")
+message("OATPP_COMPAT_BUILD_NO_THREAD_LOCAL=${OATPP_COMPAT_BUILD_NO_THREAD_LOCAL}")
 
 ## Set definitions ###############################################################################
 
@@ -106,312 +111,314 @@ if(CMAKE_COMPILER_IS_GNUCXX AND ${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS 5.0)
     add_definitions(-DOATPP_DISABLE_STD_PUT_TIME)
 endif()
 
+message("\n############################################################################\n")
+
 ###################################################################################################
 
-message("-- oatpp version: '${OATPP_THIS_MODULE_VERSION}'")
+message("oatpp version: '${OATPP_THIS_MODULE_VERSION}'")
 
 #SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
 #SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
 
+
 #######################################################################################################
 ## oatpp
 
-
 add_library(oatpp
-        algorithm/CRC.cpp
-        algorithm/CRC.hpp
-        codegen/ApiClient_define.hpp
-        codegen/ApiClient_undef.hpp
-        codegen/ApiController_define.hpp
-        codegen/ApiController_undef.hpp
-        codegen/DbClient_define.hpp
-        codegen/DbClient_undef.hpp
-        codegen/DTO_define.hpp
-        codegen/DTO_undef.hpp
-        codegen/api_controller/auth_define.hpp
-        codegen/api_controller/auth_undef.hpp
-        codegen/api_controller/base_define.hpp
-        codegen/api_controller/base_undef.hpp
-        codegen/api_controller/bundle_define.hpp
-        codegen/api_controller/bundle_undef.hpp
-        codegen/api_controller/cors_define.hpp
-        codegen/api_controller/cors_undef.hpp
-        codegen/dto/base_define.hpp
-        codegen/dto/base_undef.hpp
-        codegen/dto/enum_define.hpp
-        codegen/dto/enum_undef.hpp
-        core/IODefinitions.cpp
-        core/IODefinitions.hpp
-        core/Types.hpp
-        core/async/ConditionVariable.cpp
-        core/async/ConditionVariable.hpp
-        core/async/Coroutine.cpp
-        core/async/Coroutine.hpp
-        core/async/CoroutineWaitList.cpp
-        core/async/CoroutineWaitList.hpp
-        core/async/Error.cpp
-        core/async/Error.hpp
-        core/async/Executor.cpp
-        core/async/Executor.hpp
-        core/async/Lock.cpp
-        core/async/Lock.hpp
-        core/async/Processor.cpp
-        core/async/Processor.hpp
-        core/async/utils/FastQueue.hpp
-        core/async/worker/IOEventWorker_common.cpp
-        core/async/worker/IOEventWorker_epoll.cpp
-        core/async/worker/IOEventWorker_kqueue.cpp
-        core/async/worker/IOEventWorker_stub.cpp
-        core/async/worker/IOEventWorker.hpp
-        core/async/worker/IOWorker.cpp
-        core/async/worker/IOWorker.hpp
-        core/async/worker/TimerWorker.cpp
-        core/async/worker/TimerWorker.hpp
-        core/async/worker/Worker.cpp
-        core/async/worker/Worker.hpp
-        core/base/CommandLineArguments.cpp
-        core/base/CommandLineArguments.hpp
-        core/base/Config.hpp
-        core/base/Countable.cpp
-        core/base/Countable.hpp
-        core/base/Environment.cpp
-        core/base/Environment.hpp
-        core/base/ObjectHandle.hpp
-        core/concurrency/SpinLock.cpp
-        core/concurrency/SpinLock.hpp
-        core/concurrency/Thread.cpp
-        core/concurrency/Thread.hpp
-        core/data/Bundle.cpp
-        core/data/Bundle.hpp
-        core/data/buffer/FIFOBuffer.cpp
-        core/data/buffer/FIFOBuffer.hpp
-        core/data/buffer/IOBuffer.cpp
-        core/data/buffer/IOBuffer.hpp
-        core/data/buffer/Processor.cpp
-        core/data/buffer/Processor.hpp
-        core/data/mapping/ObjectMapper.cpp
-        core/data/mapping/ObjectMapper.hpp
-        core/data/mapping/TypeResolver.cpp
-        core/data/mapping/TypeResolver.hpp
-        core/data/mapping/type/Any.cpp
-        core/data/mapping/type/Any.hpp
-        core/data/mapping/type/Collection.hpp
-        core/data/mapping/type/Enum.cpp
-        core/data/mapping/type/Enum.hpp
-        core/data/mapping/type/List.cpp
-        core/data/mapping/type/List.hpp
-        core/data/mapping/type/Map.hpp
-        core/data/mapping/type/Object.cpp
-        core/data/mapping/type/Object.hpp
-        core/data/mapping/type/PairList.cpp
-        core/data/mapping/type/PairList.hpp
-        core/data/mapping/type/Primitive.cpp
-        core/data/mapping/type/Primitive.hpp
-        core/data/mapping/type/Type.cpp
-        core/data/mapping/type/Type.hpp
-        core/data/mapping/type/UnorderedMap.cpp
-        core/data/mapping/type/UnorderedMap.hpp
-        core/data/mapping/type/UnorderedSet.cpp
-        core/data/mapping/type/UnorderedSet.hpp
-        core/data/mapping/type/Vector.cpp
-        core/data/mapping/type/Vector.hpp
-        core/data/resource/File.cpp
-        core/data/resource/File.hpp
-        core/data/resource/InMemoryData.cpp
-        core/data/resource/InMemoryData.hpp
-        core/data/resource/Resource.hpp
-        core/data/resource/TemporaryFile.cpp
-        core/data/resource/TemporaryFile.hpp
-        core/data/share/LazyStringMap.hpp
-        core/data/share/MemoryLabel.cpp
-        core/data/share/MemoryLabel.hpp
-        core/data/share/StringTemplate.cpp
-        core/data/share/StringTemplate.hpp
-        core/data/stream/BufferStream.cpp
-        core/data/stream/BufferStream.hpp
-        core/data/stream/FIFOStream.cpp
-        core/data/stream/FIFOStream.hpp
-        core/data/stream/FileStream.cpp
-        core/data/stream/FileStream.hpp
-        core/data/stream/Stream.cpp
-        core/data/stream/Stream.hpp
-        core/data/stream/StreamBufferedProxy.cpp
-        core/data/stream/StreamBufferedProxy.hpp
-        core/macro/basic.hpp
-        core/macro/codegen.hpp
-        core/macro/component.hpp
-        core/parser/Caret.cpp
-        core/parser/Caret.hpp
-        core/parser/ParsingError.cpp
-        core/parser/ParsingError.hpp
-        core/provider/Invalidator.hpp
-        core/provider/Pool.hpp
-        core/provider/Provider.hpp
-        core/utils/Binary.cpp
-        core/utils/Binary.hpp
-        core/utils/ConversionUtils.cpp
-        core/utils/ConversionUtils.hpp
-        core/utils/Random.cpp
-        core/utils/Random.hpp
-        core/utils/String.cpp
-        core/utils/String.hpp
-        encoding/Base64.cpp
-        encoding/Base64.hpp
-        encoding/Hex.cpp
-        encoding/Hex.hpp
-        encoding/Unicode.cpp
-        encoding/Unicode.hpp
-        encoding/Url.cpp
-        encoding/Url.hpp
-        network/Address.cpp
-        network/Address.hpp
-        network/ConnectionHandler.hpp
-        network/ConnectionPool.cpp
-        network/ConnectionPool.hpp
-        network/ConnectionProvider.cpp
-        network/ConnectionProvider.hpp
-        network/ConnectionProviderSwitch.cpp
-        network/ConnectionProviderSwitch.hpp
-        network/Server.cpp
-        network/Server.hpp
-        network/Url.cpp
-        network/Url.hpp
-        network/monitor/ConnectionInactivityChecker.cpp
-        network/monitor/ConnectionInactivityChecker.hpp
-        network/monitor/ConnectionMaxAgeChecker.cpp
-        network/monitor/ConnectionMaxAgeChecker.hpp
-        network/monitor/ConnectionMonitor.cpp
-        network/monitor/ConnectionMonitor.hpp
-        network/monitor/MetricsChecker.hpp
-        network/monitor/StatCollector.hpp
-        network/tcp/Connection.cpp
-        network/tcp/Connection.hpp
-        network/tcp/ConnectionConfigurer.hpp
-        network/tcp/client/ConnectionProvider.cpp
-        network/tcp/client/ConnectionProvider.hpp
-        network/tcp/server/ConnectionProvider.cpp
-        network/tcp/server/ConnectionProvider.hpp
-        network/virtual_/Interface.cpp
-        network/virtual_/Interface.hpp
-        network/virtual_/Pipe.cpp
-        network/virtual_/Pipe.hpp
-        network/virtual_/Socket.cpp
-        network/virtual_/Socket.hpp
-        network/virtual_/client/ConnectionProvider.cpp
-        network/virtual_/client/ConnectionProvider.hpp
-        network/virtual_/server/ConnectionProvider.cpp
-        network/virtual_/server/ConnectionProvider.hpp
-        orm/Connection.hpp
-        orm/DbClient.cpp
-        orm/DbClient.hpp
-        orm/Executor.cpp
-        orm/Executor.hpp
-        orm/QueryResult.cpp
-        orm/QueryResult.hpp
-        orm/SchemaMigration.cpp
-        orm/SchemaMigration.hpp
-        orm/Transaction.cpp
-        orm/Transaction.hpp
-        parser/json/Beautifier.cpp
-        parser/json/Beautifier.hpp
-        parser/json/Utils.cpp
-        parser/json/Utils.hpp
-        parser/json/mapping/Deserializer.cpp
-        parser/json/mapping/Deserializer.hpp
-        parser/json/mapping/ObjectMapper.cpp
-        parser/json/mapping/ObjectMapper.hpp
-        parser/json/mapping/Serializer.cpp
-        parser/json/mapping/Serializer.hpp
-        web/client/ApiClient.cpp
-        web/client/ApiClient.hpp
-        web/client/HttpRequestExecutor.cpp
-        web/client/HttpRequestExecutor.hpp
-        web/client/RequestExecutor.cpp
-        web/client/RequestExecutor.hpp
-        web/client/RetryPolicy.cpp
-        web/client/RetryPolicy.hpp
-        web/mime/multipart/FileProvider.cpp
-        web/mime/multipart/FileProvider.hpp
-        web/mime/multipart/InMemoryDataProvider.cpp
-        web/mime/multipart/InMemoryDataProvider.hpp
-        web/mime/multipart/Multipart.cpp
-        web/mime/multipart/Multipart.hpp
-        web/mime/multipart/Part.cpp
-        web/mime/multipart/Part.hpp
-        web/mime/multipart/PartList.cpp
-        web/mime/multipart/PartList.hpp
-        web/mime/multipart/PartReader.cpp
-        web/mime/multipart/PartReader.hpp
-        web/mime/multipart/Reader.cpp
-        web/mime/multipart/Reader.hpp
-        web/mime/multipart/StatefulParser.cpp
-        web/mime/multipart/StatefulParser.hpp
-        web/mime/multipart/TemporaryFileProvider.cpp
-        web/mime/multipart/TemporaryFileProvider.hpp
-        web/protocol/CommunicationError.cpp
-        web/protocol/CommunicationError.hpp
-        web/protocol/http/Http.cpp
-        web/protocol/http/Http.hpp
-        web/protocol/http/encoding/Chunked.cpp
-        web/protocol/http/encoding/Chunked.hpp
-        web/protocol/http/encoding/EncoderProvider.hpp
-        web/protocol/http/encoding/ProviderCollection.cpp
-        web/protocol/http/encoding/ProviderCollection.hpp
-        web/protocol/http/incoming/BodyDecoder.cpp
-        web/protocol/http/incoming/BodyDecoder.hpp
-        web/protocol/http/incoming/Request.cpp
-        web/protocol/http/incoming/Request.hpp
-        web/protocol/http/incoming/RequestHeadersReader.cpp
-        web/protocol/http/incoming/RequestHeadersReader.hpp
-        web/protocol/http/incoming/Response.cpp
-        web/protocol/http/incoming/Response.hpp
-        web/protocol/http/incoming/ResponseHeadersReader.cpp
-        web/protocol/http/incoming/ResponseHeadersReader.hpp
-        web/protocol/http/incoming/SimpleBodyDecoder.cpp
-        web/protocol/http/incoming/SimpleBodyDecoder.hpp
-        web/protocol/http/outgoing/Body.cpp
-        web/protocol/http/outgoing/Body.hpp
-        web/protocol/http/outgoing/BufferBody.cpp
-        web/protocol/http/outgoing/BufferBody.hpp
-        web/protocol/http/outgoing/MultipartBody.cpp
-        web/protocol/http/outgoing/MultipartBody.hpp
-        web/protocol/http/outgoing/Request.cpp
-        web/protocol/http/outgoing/Request.hpp
-        web/protocol/http/outgoing/Response.cpp
-        web/protocol/http/outgoing/Response.hpp
-        web/protocol/http/outgoing/ResponseFactory.cpp
-        web/protocol/http/outgoing/ResponseFactory.hpp
-        web/protocol/http/outgoing/StreamingBody.cpp
-        web/protocol/http/outgoing/StreamingBody.hpp
-        web/protocol/http/utils/CommunicationUtils.cpp
-        web/protocol/http/utils/CommunicationUtils.hpp
-        web/server/AsyncHttpConnectionHandler.cpp
-        web/server/AsyncHttpConnectionHandler.hpp
-        web/server/HttpConnectionHandler.cpp
-        web/server/HttpConnectionHandler.hpp
-        web/server/HttpProcessor.cpp
-        web/server/HttpProcessor.hpp
-        web/server/HttpRequestHandler.hpp
-        web/server/HttpRouter.cpp
-        web/server/HttpRouter.hpp
-        web/server/api/ApiController.cpp
-        web/server/api/ApiController.hpp
-        web/server/api/Endpoint.cpp
-        web/server/api/Endpoint.hpp
-        web/server/handler/AuthorizationHandler.cpp
-        web/server/handler/AuthorizationHandler.hpp
-        web/server/handler/ErrorHandler.cpp
-        web/server/handler/ErrorHandler.hpp
-        web/server/interceptor/AllowCorsGlobal.cpp
-        web/server/interceptor/AllowCorsGlobal.hpp
-        web/server/interceptor/RequestInterceptor.hpp
-        web/server/interceptor/ResponseInterceptor.hpp
-        web/url/mapping/Pattern.cpp
-        web/url/mapping/Pattern.hpp
-        web/url/mapping/Router.hpp
+        oatpp/algorithm/CRC.cpp
+        oatpp/algorithm/CRC.hpp
+        oatpp/codegen/ApiClient_define.hpp
+        oatpp/codegen/ApiClient_undef.hpp
+        oatpp/codegen/ApiController_define.hpp
+        oatpp/codegen/ApiController_undef.hpp
+        oatpp/codegen/DbClient_define.hpp
+        oatpp/codegen/DbClient_undef.hpp
+        oatpp/codegen/DTO_define.hpp
+        oatpp/codegen/DTO_undef.hpp
+        oatpp/codegen/api_controller/auth_define.hpp
+        oatpp/codegen/api_controller/auth_undef.hpp
+        oatpp/codegen/api_controller/base_define.hpp
+        oatpp/codegen/api_controller/base_undef.hpp
+        oatpp/codegen/api_controller/bundle_define.hpp
+        oatpp/codegen/api_controller/bundle_undef.hpp
+        oatpp/codegen/api_controller/cors_define.hpp
+        oatpp/codegen/api_controller/cors_undef.hpp
+        oatpp/codegen/dto/base_define.hpp
+        oatpp/codegen/dto/base_undef.hpp
+        oatpp/codegen/dto/enum_define.hpp
+        oatpp/codegen/dto/enum_undef.hpp
+        oatpp/core/IODefinitions.cpp
+        oatpp/core/IODefinitions.hpp
+        oatpp/core/Types.hpp
+        oatpp/core/async/ConditionVariable.cpp
+        oatpp/core/async/ConditionVariable.hpp
+        oatpp/core/async/Coroutine.cpp
+        oatpp/core/async/Coroutine.hpp
+        oatpp/core/async/CoroutineWaitList.cpp
+        oatpp/core/async/CoroutineWaitList.hpp
+        oatpp/core/async/Error.cpp
+        oatpp/core/async/Error.hpp
+        oatpp/core/async/Executor.cpp
+        oatpp/core/async/Executor.hpp
+        oatpp/core/async/Lock.cpp
+        oatpp/core/async/Lock.hpp
+        oatpp/core/async/Processor.cpp
+        oatpp/core/async/Processor.hpp
+        oatpp/core/async/utils/FastQueue.hpp
+        oatpp/core/async/worker/IOEventWorker_common.cpp
+        oatpp/core/async/worker/IOEventWorker_epoll.cpp
+        oatpp/core/async/worker/IOEventWorker_kqueue.cpp
+        oatpp/core/async/worker/IOEventWorker_stub.cpp
+        oatpp/core/async/worker/IOEventWorker.hpp
+        oatpp/core/async/worker/IOWorker.cpp
+        oatpp/core/async/worker/IOWorker.hpp
+        oatpp/core/async/worker/TimerWorker.cpp
+        oatpp/core/async/worker/TimerWorker.hpp
+        oatpp/core/async/worker/Worker.cpp
+        oatpp/core/async/worker/Worker.hpp
+        oatpp/core/base/CommandLineArguments.cpp
+        oatpp/core/base/CommandLineArguments.hpp
+        oatpp/core/base/Config.hpp
+        oatpp/core/base/Countable.cpp
+        oatpp/core/base/Countable.hpp
+        oatpp/core/base/Environment.cpp
+        oatpp/core/base/Environment.hpp
+        oatpp/core/base/ObjectHandle.hpp
+        oatpp/core/concurrency/SpinLock.cpp
+        oatpp/core/concurrency/SpinLock.hpp
+        oatpp/core/concurrency/Thread.cpp
+        oatpp/core/concurrency/Thread.hpp
+        oatpp/core/data/Bundle.cpp
+        oatpp/core/data/Bundle.hpp
+        oatpp/core/data/buffer/FIFOBuffer.cpp
+        oatpp/core/data/buffer/FIFOBuffer.hpp
+        oatpp/core/data/buffer/IOBuffer.cpp
+        oatpp/core/data/buffer/IOBuffer.hpp
+        oatpp/core/data/buffer/Processor.cpp
+        oatpp/core/data/buffer/Processor.hpp
+        oatpp/core/data/mapping/ObjectMapper.cpp
+        oatpp/core/data/mapping/ObjectMapper.hpp
+        oatpp/core/data/mapping/TypeResolver.cpp
+        oatpp/core/data/mapping/TypeResolver.hpp
+        oatpp/core/data/mapping/type/Any.cpp
+        oatpp/core/data/mapping/type/Any.hpp
+        oatpp/core/data/mapping/type/Collection.hpp
+        oatpp/core/data/mapping/type/Enum.cpp
+        oatpp/core/data/mapping/type/Enum.hpp
+        oatpp/core/data/mapping/type/List.cpp
+        oatpp/core/data/mapping/type/List.hpp
+        oatpp/core/data/mapping/type/Map.hpp
+        oatpp/core/data/mapping/type/Object.cpp
+        oatpp/core/data/mapping/type/Object.hpp
+        oatpp/core/data/mapping/type/PairList.cpp
+        oatpp/core/data/mapping/type/PairList.hpp
+        oatpp/core/data/mapping/type/Primitive.cpp
+        oatpp/core/data/mapping/type/Primitive.hpp
+        oatpp/core/data/mapping/type/Type.cpp
+        oatpp/core/data/mapping/type/Type.hpp
+        oatpp/core/data/mapping/type/UnorderedMap.cpp
+        oatpp/core/data/mapping/type/UnorderedMap.hpp
+        oatpp/core/data/mapping/type/UnorderedSet.cpp
+        oatpp/core/data/mapping/type/UnorderedSet.hpp
+        oatpp/core/data/mapping/type/Vector.cpp
+        oatpp/core/data/mapping/type/Vector.hpp
+        oatpp/core/data/resource/File.cpp
+        oatpp/core/data/resource/File.hpp
+        oatpp/core/data/resource/InMemoryData.cpp
+        oatpp/core/data/resource/InMemoryData.hpp
+        oatpp/core/data/resource/Resource.hpp
+        oatpp/core/data/resource/TemporaryFile.cpp
+        oatpp/core/data/resource/TemporaryFile.hpp
+        oatpp/core/data/share/LazyStringMap.hpp
+        oatpp/core/data/share/MemoryLabel.cpp
+        oatpp/core/data/share/MemoryLabel.hpp
+        oatpp/core/data/share/StringTemplate.cpp
+        oatpp/core/data/share/StringTemplate.hpp
+        oatpp/core/data/stream/BufferStream.cpp
+        oatpp/core/data/stream/BufferStream.hpp
+        oatpp/core/data/stream/FIFOStream.cpp
+        oatpp/core/data/stream/FIFOStream.hpp
+        oatpp/core/data/stream/FileStream.cpp
+        oatpp/core/data/stream/FileStream.hpp
+        oatpp/core/data/stream/Stream.cpp
+        oatpp/core/data/stream/Stream.hpp
+        oatpp/core/data/stream/StreamBufferedProxy.cpp
+        oatpp/core/data/stream/StreamBufferedProxy.hpp
+        oatpp/core/macro/basic.hpp
+        oatpp/core/macro/codegen.hpp
+        oatpp/core/macro/component.hpp
+        oatpp/core/parser/Caret.cpp
+        oatpp/core/parser/Caret.hpp
+        oatpp/core/parser/ParsingError.cpp
+        oatpp/core/parser/ParsingError.hpp
+        oatpp/core/provider/Invalidator.hpp
+        oatpp/core/provider/Pool.hpp
+        oatpp/core/provider/Provider.hpp
+        oatpp/core/utils/Binary.cpp
+        oatpp/core/utils/Binary.hpp
+        oatpp/core/utils/ConversionUtils.cpp
+        oatpp/core/utils/ConversionUtils.hpp
+        oatpp/core/utils/Random.cpp
+        oatpp/core/utils/Random.hpp
+        oatpp/core/utils/String.cpp
+        oatpp/core/utils/String.hpp
+        oatpp/encoding/Base64.cpp
+        oatpp/encoding/Base64.hpp
+        oatpp/encoding/Hex.cpp
+        oatpp/encoding/Hex.hpp
+        oatpp/encoding/Unicode.cpp
+        oatpp/encoding/Unicode.hpp
+        oatpp/encoding/Url.cpp
+        oatpp/encoding/Url.hpp
+        oatpp/network/Address.cpp
+        oatpp/network/Address.hpp
+        oatpp/network/ConnectionHandler.hpp
+        oatpp/network/ConnectionPool.cpp
+        oatpp/network/ConnectionPool.hpp
+        oatpp/network/ConnectionProvider.cpp
+        oatpp/network/ConnectionProvider.hpp
+        oatpp/network/ConnectionProviderSwitch.cpp
+        oatpp/network/ConnectionProviderSwitch.hpp
+        oatpp/network/Server.cpp
+        oatpp/network/Server.hpp
+        oatpp/network/Url.cpp
+        oatpp/network/Url.hpp
+        oatpp/network/monitor/ConnectionInactivityChecker.cpp
+        oatpp/network/monitor/ConnectionInactivityChecker.hpp
+        oatpp/network/monitor/ConnectionMaxAgeChecker.cpp
+        oatpp/network/monitor/ConnectionMaxAgeChecker.hpp
+        oatpp/network/monitor/ConnectionMonitor.cpp
+        oatpp/network/monitor/ConnectionMonitor.hpp
+        oatpp/network/monitor/MetricsChecker.hpp
+        oatpp/network/monitor/StatCollector.hpp
+        oatpp/network/tcp/Connection.cpp
+        oatpp/network/tcp/Connection.hpp
+        oatpp/network/tcp/ConnectionConfigurer.hpp
+        oatpp/network/tcp/client/ConnectionProvider.cpp
+        oatpp/network/tcp/client/ConnectionProvider.hpp
+        oatpp/network/tcp/server/ConnectionProvider.cpp
+        oatpp/network/tcp/server/ConnectionProvider.hpp
+        oatpp/network/virtual_/Interface.cpp
+        oatpp/network/virtual_/Interface.hpp
+        oatpp/network/virtual_/Pipe.cpp
+        oatpp/network/virtual_/Pipe.hpp
+        oatpp/network/virtual_/Socket.cpp
+        oatpp/network/virtual_/Socket.hpp
+        oatpp/network/virtual_/client/ConnectionProvider.cpp
+        oatpp/network/virtual_/client/ConnectionProvider.hpp
+        oatpp/network/virtual_/server/ConnectionProvider.cpp
+        oatpp/network/virtual_/server/ConnectionProvider.hpp
+        oatpp/orm/Connection.hpp
+        oatpp/orm/DbClient.cpp
+        oatpp/orm/DbClient.hpp
+        oatpp/orm/Executor.cpp
+        oatpp/orm/Executor.hpp
+        oatpp/orm/QueryResult.cpp
+        oatpp/orm/QueryResult.hpp
+        oatpp/orm/SchemaMigration.cpp
+        oatpp/orm/SchemaMigration.hpp
+        oatpp/orm/Transaction.cpp
+        oatpp/orm/Transaction.hpp
+        oatpp/parser/json/Beautifier.cpp
+        oatpp/parser/json/Beautifier.hpp
+        oatpp/parser/json/Utils.cpp
+        oatpp/parser/json/Utils.hpp
+        oatpp/parser/json/mapping/Deserializer.cpp
+        oatpp/parser/json/mapping/Deserializer.hpp
+        oatpp/parser/json/mapping/ObjectMapper.cpp
+        oatpp/parser/json/mapping/ObjectMapper.hpp
+        oatpp/parser/json/mapping/Serializer.cpp
+        oatpp/parser/json/mapping/Serializer.hpp
+        oatpp/web/client/ApiClient.cpp
+        oatpp/web/client/ApiClient.hpp
+        oatpp/web/client/HttpRequestExecutor.cpp
+        oatpp/web/client/HttpRequestExecutor.hpp
+        oatpp/web/client/RequestExecutor.cpp
+        oatpp/web/client/RequestExecutor.hpp
+        oatpp/web/client/RetryPolicy.cpp
+        oatpp/web/client/RetryPolicy.hpp
+        oatpp/web/mime/multipart/FileProvider.cpp
+        oatpp/web/mime/multipart/FileProvider.hpp
+        oatpp/web/mime/multipart/InMemoryDataProvider.cpp
+        oatpp/web/mime/multipart/InMemoryDataProvider.hpp
+        oatpp/web/mime/multipart/Multipart.cpp
+        oatpp/web/mime/multipart/Multipart.hpp
+        oatpp/web/mime/multipart/Part.cpp
+        oatpp/web/mime/multipart/Part.hpp
+        oatpp/web/mime/multipart/PartList.cpp
+        oatpp/web/mime/multipart/PartList.hpp
+        oatpp/web/mime/multipart/PartReader.cpp
+        oatpp/web/mime/multipart/PartReader.hpp
+        oatpp/web/mime/multipart/Reader.cpp
+        oatpp/web/mime/multipart/Reader.hpp
+        oatpp/web/mime/multipart/StatefulParser.cpp
+        oatpp/web/mime/multipart/StatefulParser.hpp
+        oatpp/web/mime/multipart/TemporaryFileProvider.cpp
+        oatpp/web/mime/multipart/TemporaryFileProvider.hpp
+        oatpp/web/protocol/CommunicationError.cpp
+        oatpp/web/protocol/CommunicationError.hpp
+        oatpp/web/protocol/http/Http.cpp
+        oatpp/web/protocol/http/Http.hpp
+        oatpp/web/protocol/http/encoding/Chunked.cpp
+        oatpp/web/protocol/http/encoding/Chunked.hpp
+        oatpp/web/protocol/http/encoding/EncoderProvider.hpp
+        oatpp/web/protocol/http/encoding/ProviderCollection.cpp
+        oatpp/web/protocol/http/encoding/ProviderCollection.hpp
+        oatpp/web/protocol/http/incoming/BodyDecoder.cpp
+        oatpp/web/protocol/http/incoming/BodyDecoder.hpp
+        oatpp/web/protocol/http/incoming/Request.cpp
+        oatpp/web/protocol/http/incoming/Request.hpp
+        oatpp/web/protocol/http/incoming/RequestHeadersReader.cpp
+        oatpp/web/protocol/http/incoming/RequestHeadersReader.hpp
+        oatpp/web/protocol/http/incoming/Response.cpp
+        oatpp/web/protocol/http/incoming/Response.hpp
+        oatpp/web/protocol/http/incoming/ResponseHeadersReader.cpp
+        oatpp/web/protocol/http/incoming/ResponseHeadersReader.hpp
+        oatpp/web/protocol/http/incoming/SimpleBodyDecoder.cpp
+        oatpp/web/protocol/http/incoming/SimpleBodyDecoder.hpp
+        oatpp/web/protocol/http/outgoing/Body.cpp
+        oatpp/web/protocol/http/outgoing/Body.hpp
+        oatpp/web/protocol/http/outgoing/BufferBody.cpp
+        oatpp/web/protocol/http/outgoing/BufferBody.hpp
+        oatpp/web/protocol/http/outgoing/MultipartBody.cpp
+        oatpp/web/protocol/http/outgoing/MultipartBody.hpp
+        oatpp/web/protocol/http/outgoing/Request.cpp
+        oatpp/web/protocol/http/outgoing/Request.hpp
+        oatpp/web/protocol/http/outgoing/Response.cpp
+        oatpp/web/protocol/http/outgoing/Response.hpp
+        oatpp/web/protocol/http/outgoing/ResponseFactory.cpp
+        oatpp/web/protocol/http/outgoing/ResponseFactory.hpp
+        oatpp/web/protocol/http/outgoing/StreamingBody.cpp
+        oatpp/web/protocol/http/outgoing/StreamingBody.hpp
+        oatpp/web/protocol/http/utils/CommunicationUtils.cpp
+        oatpp/web/protocol/http/utils/CommunicationUtils.hpp
+        oatpp/web/server/AsyncHttpConnectionHandler.cpp
+        oatpp/web/server/AsyncHttpConnectionHandler.hpp
+        oatpp/web/server/HttpConnectionHandler.cpp
+        oatpp/web/server/HttpConnectionHandler.hpp
+        oatpp/web/server/HttpProcessor.cpp
+        oatpp/web/server/HttpProcessor.hpp
+        oatpp/web/server/HttpRequestHandler.hpp
+        oatpp/web/server/HttpRouter.cpp
+        oatpp/web/server/HttpRouter.hpp
+        oatpp/web/server/api/ApiController.cpp
+        oatpp/web/server/api/ApiController.hpp
+        oatpp/web/server/api/Endpoint.cpp
+        oatpp/web/server/api/Endpoint.hpp
+        oatpp/web/server/handler/AuthorizationHandler.cpp
+        oatpp/web/server/handler/AuthorizationHandler.hpp
+        oatpp/web/server/handler/ErrorHandler.cpp
+        oatpp/web/server/handler/ErrorHandler.hpp
+        oatpp/web/server/interceptor/AllowCorsGlobal.cpp
+        oatpp/web/server/interceptor/AllowCorsGlobal.hpp
+        oatpp/web/server/interceptor/RequestInterceptor.hpp
+        oatpp/web/server/interceptor/ResponseInterceptor.hpp
+        oatpp/web/url/mapping/Pattern.cpp
+        oatpp/web/url/mapping/Pattern.hpp
+        oatpp/web/url/mapping/Router.hpp
 )
 include(Oatpp)
-set_target_source_groups(oatpp STRIP_PREFIX ".")
+set_target_source_groups(oatpp STRIP_PREFIX "oatpp")
 
 set_target_properties(oatpp PROPERTIES
         CXX_STANDARD 11
@@ -438,6 +445,8 @@ elseif(NOT APPLE AND NOT ${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
                 SET(OATPP_ADD_LINK_LIBS atomic)
         endif()
 endif()
+
+message("OATPP_ADD_LINK_LIBS=${OATPP_ADD_LINK_LIBS}")
 
 target_link_libraries(oatpp PUBLIC ${CMAKE_THREAD_LIBS_INIT}
         ${OATPP_ADD_LINK_LIBS}

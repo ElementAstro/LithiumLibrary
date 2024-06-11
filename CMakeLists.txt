@@ -7,26 +7,20 @@
 # License: GPL3
 
 cmake_minimum_required(VERSION 3.20)
-project(lithium_thirdparty LANGUAGES CXX)
+project(lithium.thirdparty LANGUAGES CXX)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 LIST(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/")
 LIST(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake_modules/")
 
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
-endif()
-
-add_subdirectory(oatpp)
-add_subdirectory(oatpp-swagger)
-add_subdirectory(oatpp-websocket)
-add_subdirectory(oatpp-sqlite)
-add_subdirectory(oatpp-openssl)
-add_subdirectory(oatpp-zlib)
-add_subdirectory(backward)
-add_subdirectory(pocketpy)
-add_subdirectory(libzippp)
-add_subdirectory(tinyxml2)
-add_subdirectory(cpp_httplib)
-add_subdirectory(ccfits)
+function(add_subdirectories_recursively start_dir)
+  file(GLOB entries "${start_dir}/*")
+  foreach(entry ${entries})
+    if(IS_DIRECTORY ${entry} AND EXISTS "${entry}/CMakeLists.txt")
+      message(STATUS "Adding thirdparty library subdirectory: ${entry}")
+      add_subdirectory(${entry})
+    endif()
+  endforeach()
+endfunction()
+add_subdirectories_recursively(${CMAKE_CURRENT_SOURCE_DIR})

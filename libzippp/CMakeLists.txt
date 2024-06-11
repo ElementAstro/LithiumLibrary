@@ -100,7 +100,7 @@ if(LIBZIPPP_INSTALL)
 
   if(LIBZIPPP_INSTALL_HEADERS)
     install(
-      FILES libzippp.h
+      FILES src/libzippp.h
       DESTINATION ${install_include_location}
     )
   endif()
@@ -131,7 +131,7 @@ if(LIBZIPPP_INSTALL)
 
   install(
     FILES ${PROJECT_CONFIG_FILE} ${PROJECT_VERSION_FILE}
-    $<$<NOT:$<BOOL:"${LIBZIPPP_CMAKE_CONFIG_MODE}">>:cmake_modules/FindLIBZIP.cmake>
+    $<$<NOT:$<BOOL:"${LIBZIPPP_CMAKE_CONFIG_MODE}">>:cmake/FindLIBZIP.cmake>
     DESTINATION ${configInstallDestination}
   )
 
@@ -150,9 +150,14 @@ if(LIBZIPPP_INSTALL)
       REGEX REPLACE "^${CMAKE_INSTALL_PREFIX}" "\${exec_prefix}"
       pc_libdir "${CMAKE_INSTALL_FULL_LIBDIR}"
     )
+    get_target_property(pc_cd_list libzippp INTERFACE_COMPILE_DEFINITIONS)
+    if(pc_cd_list)
+      list(TRANSFORM pc_cd_list PREPEND "-D")
+      list(JOIN pc_cd_list " " pc_compile_definitions)
+    endif()
     configure_file(libzippp.pc.in generated/libzippp.pc @ONLY)
     install(
-      FILES ${CMAKE_CURRENT_BINARYDIR}/generated/libzipp.pc
+      FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/libzippp.pc
       DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
     )
   endif()

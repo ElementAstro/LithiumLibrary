@@ -1,48 +1,47 @@
-
 add_library(oatpp-openssl
-        Config.cpp
-        Config.hpp
-        Connection.cpp
-        Connection.hpp
-        ErrorStack.cpp
-        ErrorStack.hpp
-        client/ConnectionProvider.cpp
-        client/ConnectionProvider.hpp
-        server/ConnectionProvider.cpp
-        server/ConnectionProvider.hpp
-        configurer/CaCertificateBundleBuffer.cpp
-        configurer/CaCertificateBundleBuffer.hpp
-        configurer/CertificateChainBuffer.cpp
-        configurer/CertificateChainBuffer.hpp
-        configurer/CertificateChainFile.cpp
-        configurer/CertificateChainFile.hpp
-        configurer/CertificateBuffer.cpp
-        configurer/CertificateBuffer.hpp
-        configurer/CertificateFile.cpp
-        configurer/CertificateFile.hpp
-        configurer/ContextConfigurer.hpp
-        configurer/Groups.cpp
-        configurer/Groups.hpp
-        configurer/PeerCertificateVerification.cpp
-        configurer/PeerCertificateVerification.hpp
-        configurer/PrivateKeyBuffer.cpp
-        configurer/PrivateKeyBuffer.hpp
-        configurer/PrivateKeyFile.cpp
-        configurer/PrivateKeyFile.hpp
-        configurer/TemporaryDhParamsFile.cpp
-        configurer/TemporaryDhParamsFile.hpp
-        configurer/TrustStore.cpp
-        configurer/TrustStore.hpp
+        oatpp-openssl/Config.cpp
+        oatpp-openssl/Config.hpp
+        oatpp-openssl/Connection.cpp
+        oatpp-openssl/Connection.hpp
+        oatpp-openssl/ErrorStack.cpp
+        oatpp-openssl/ErrorStack.hpp
+        oatpp-openssl/client/ConnectionProvider.cpp
+        oatpp-openssl/client/ConnectionProvider.hpp
+        oatpp-openssl/server/ConnectionProvider.cpp
+        oatpp-openssl/server/ConnectionProvider.hpp
+        oatpp-openssl/configurer/CaCertificateBundleBuffer.cpp
+        oatpp-openssl/configurer/CaCertificateBundleBuffer.hpp
+        oatpp-openssl/configurer/CertificateChainBuffer.cpp
+        oatpp-openssl/configurer/CertificateChainBuffer.hpp
+        oatpp-openssl/configurer/CertificateChainFile.cpp
+        oatpp-openssl/configurer/CertificateChainFile.hpp
+        oatpp-openssl/configurer/CertificateBuffer.cpp
+        oatpp-openssl/configurer/CertificateBuffer.hpp
+        oatpp-openssl/configurer/CertificateFile.cpp
+        oatpp-openssl/configurer/CertificateFile.hpp
+        oatpp-openssl/configurer/ContextConfigurer.hpp
+        oatpp-openssl/configurer/Groups.cpp
+        oatpp-openssl/configurer/Groups.hpp
+        oatpp-openssl/configurer/PeerCertificateVerification.cpp
+        oatpp-openssl/configurer/PeerCertificateVerification.hpp
+        oatpp-openssl/configurer/PrivateKeyBuffer.cpp
+        oatpp-openssl/configurer/PrivateKeyBuffer.hpp
+        oatpp-openssl/configurer/PrivateKeyFile.cpp
+        oatpp-openssl/configurer/PrivateKeyFile.hpp
+        oatpp-openssl/configurer/TemporaryDhParamsFile.cpp
+        oatpp-openssl/configurer/TemporaryDhParamsFile.hpp
+        oatpp-openssl/configurer/TrustStore.cpp
+        oatpp-openssl/configurer/TrustStore.hpp
 )
 
-set_target_properties(oatpp-openssl PROPERTIES
-        CXX_STANDARD 11
-        CXX_EXTENSIONS OFF
-        CXX_STANDARD_REQUIRED ON
+set_target_properties(${OATPP_THIS_MODULE_NAME} PROPERTIES
+CXX_STANDARD 11
+CXX_EXTENSIONS OFF
+CXX_STANDARD_REQUIRED ON
 )
 
 if(OATPP_MODULES_LOCATION STREQUAL OATPP_MODULES_LOCATION_EXTERNAL)
-    add_dependencies(oatpp-openssl ${LIB_OATPP_EXTERNAL})
+add_dependencies(${OATPP_THIS_MODULE_NAME} ${LIB_OATPP_EXTERNAL})
 endif()
 
 target_link_libraries(oatpp-openssl PUBLIC oatpp)

@@ -1,24 +1,24 @@
 
 add_library(oatpp-websocket
-        AsyncConnectionHandler.cpp
-        AsyncConnectionHandler.hpp
-        AsyncWebSocket.cpp
-        AsyncWebSocket.hpp
-        Config.hpp
-        ConnectionHandler.cpp
-        ConnectionHandler.hpp
-        Connector.cpp
-        Connector.hpp
-        Frame.cpp
-        Frame.hpp
-        Handshaker.cpp
-        Handshaker.hpp
-        SHA1.cpp
-        SHA1.hpp
-        Utils.cpp
-        Utils.hpp
-        WebSocket.cpp
-        WebSocket.hpp
+        oatpp-websocket/AsyncConnectionHandler.cpp
+        oatpp-websocket/AsyncConnectionHandler.hpp
+        oatpp-websocket/AsyncWebSocket.cpp
+        oatpp-websocket/AsyncWebSocket.hpp
+        oatpp-websocket/Config.hpp
+        oatpp-websocket/ConnectionHandler.cpp
+        oatpp-websocket/ConnectionHandler.hpp
+        oatpp-websocket/Connector.cpp
+        oatpp-websocket/Connector.hpp
+        oatpp-websocket/Frame.cpp
+        oatpp-websocket/Frame.hpp
+        oatpp-websocket/Handshaker.cpp
+        oatpp-websocket/Handshaker.hpp
+        oatpp-websocket/SHA1.cpp
+        oatpp-websocket/SHA1.hpp
+        oatpp-websocket/Utils.cpp
+        oatpp-websocket/Utils.hpp
+        oatpp-websocket/WebSocket.cpp
+        oatpp-websocket/WebSocket.hpp
 )
 
 set_target_properties(oatpp-websocket PROPERTIES

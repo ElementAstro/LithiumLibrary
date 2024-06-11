@@ -5,7 +5,7 @@ set (CMAKE_CXX_STANDARD_REQUIRED on)
 set (CMAKE_CXX_STANDARD 11)
 
 # Allow the developer to select whether to build Dynamic or Static libraries
-OPTION (BUILD_SHARED_LIBS "Build Shared Libraries" ON)
+OPTION (BUILD_SHARED_LIBS "Build Shared Libraries" OFF)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}")
 set (LIB_DESTINATION "${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}")
