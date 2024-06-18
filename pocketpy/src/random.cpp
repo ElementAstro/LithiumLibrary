@@ -133,19 +133,19 @@ struct Random{
         gen.seed((uint32_t)count);
     }
 
-    static void _register(VM* vm, PyObject* mod, PyObject* type){
-        vm->bind_func<1>(type, __new__, [](VM* vm, ArgsView args){
+    static void _register(VM* vm, PyVar mod, PyVar type){
+        vm->bind_func(type, __new__, 1, [](VM* vm, ArgsView args){
             Type cls = PK_OBJ_GET(Type, args[0]);
             return vm->heap.gcnew<Random>(cls);
         });
 
-        vm->bind_method<1>(type, "seed", [](VM* vm, ArgsView args) {
+        vm->bind_func(type, "seed", 2, [](VM* vm, ArgsView args) {
             Random& self = PK_OBJ_GET(Random, args[0]);
             self.gen.seed(CAST(i64, args[1]));
             return vm->None;
         });
 
-        vm->bind_method<2>(type, "randint", [](VM* vm, ArgsView args) {
+        vm->bind_func(type, "randint", 3, [](VM* vm, ArgsView args) {
             Random& self = PK_OBJ_GET(Random, args[0]);
             i64 a = CAST(i64, args[1]);
             i64 b = CAST(i64, args[2]);
@@ -153,12 +153,12 @@ struct Random{
             return VAR(self.gen.randint(a, b));
         });
 
-        vm->bind_method<0>(type, "random", [](VM* vm, ArgsView args) {
+        vm->bind_func(type, "random", 1, [](VM* vm, ArgsView args) {
             Random& self = PK_OBJ_GET(Random, args[0]);
             return VAR(self.gen.random());
         });
 
-        vm->bind_method<2>(type, "uniform", [](VM* vm, ArgsView args) {
+        vm->bind_func(type, "uniform", 3, [](VM* vm, ArgsView args) {
             Random& self = PK_OBJ_GET(Random, args[0]);
             f64 a = CAST(f64, args[1]);
             f64 b = CAST(f64, args[2]);
@@ -166,7 +166,7 @@ struct Random{
             return VAR(self.gen.uniform(a, b));
         });
 
-        vm->bind_method<1>(type, "shuffle", [](VM* vm, ArgsView args) {
+        vm->bind_func(type, "shuffle", 2, [](VM* vm, ArgsView args) {
             Random& self = PK_OBJ_GET(Random, args[0]);
             List& L = CAST(List&, args[1]);
             for(int i = L.size() - 1; i > 0; i--){
@@ -176,7 +176,7 @@ struct Random{
             return vm->None;
         });
 
-        vm->bind_method<1>(type, "choice", [](VM* vm, ArgsView args) {
+        vm->bind_func(type, "choice", 2, [](VM* vm, ArgsView args) {
             Random& self = PK_OBJ_GET(Random, args[0]);
             ArgsView view = vm->cast_array_view(args[1]);
             if(view.empty()) vm->IndexError("cannot choose from an empty sequence");
@@ -187,7 +187,7 @@ struct Random{
         vm->bind(type, "choices(self, population, weights=None, k=1)", [](VM* vm, ArgsView args) {
             Random& self = PK_OBJ_GET(Random, args[0]);
             ArgsView view = vm->cast_array_view(args[1]);
-            PyObject** data = view.begin();
+            PyVar* data = view.begin();
             int size = view.size();
             if(size == 0) vm->IndexError("cannot choose from an empty sequence");
             pod_vector<f64> cum_weights(size);
@@ -215,9 +215,9 @@ struct Random{
 };
 
 void add_module_random(VM* vm){
-    PyObject* mod = vm->new_module("random");
+    PyVar mod = vm->new_module("random");
     vm->register_user_class<Random>(mod, "Random");
-    PyObject* instance = vm->new_user_object<Random>();
+    PyVar instance = vm->new_user_object<Random>();
     mod->attr().set("seed", vm->getattr(instance, "seed"));
     mod->attr().set("random", vm->getattr(instance, "random"));
     mod->attr().set("uniform", vm->getattr(instance, "uniform"));

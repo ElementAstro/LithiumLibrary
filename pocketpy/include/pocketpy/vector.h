@@ -11,7 +11,7 @@ struct pod_vector{
     static constexpr int N = 64 / SizeT;
 
     // static_assert(64 % SizeT == 0);
-    static_assert(is_pod<T>::value);
+    static_assert(is_pod_v<T>);
     static_assert(N >= 4);
 
     int _size;
@@ -290,7 +290,7 @@ namespace pkpy
             const auto size = other.size();
             const auto capacity = other.capacity();
             m_begin = reinterpret_cast<T*>(other.is_small() ? m_buffer : std::malloc(sizeof(T) * capacity));
-            uninitialized_copy_n(other.begin, size, this->m_begin);
+            uninitialized_copy_n(other.m_begin, size, this->m_begin);
             m_end = m_begin + size;
             m_max = m_begin + capacity;
         }
@@ -394,16 +394,14 @@ namespace pkpy
         }
     };
 
-// small_vector_no_copy_and_move
-
     template<typename T, std::size_t N>
-    class small_vector_no_copy_and_move: public small_vector<T, N>
+    class small_vector_2: public small_vector<T, N>
     {
     public:
-        small_vector_no_copy_and_move() = default;
-        small_vector_no_copy_and_move(const small_vector_no_copy_and_move& other) = delete;
-        small_vector_no_copy_and_move& operator=(const small_vector_no_copy_and_move& other) = delete;
-        small_vector_no_copy_and_move(small_vector_no_copy_and_move&& other) = delete;
-        small_vector_no_copy_and_move& operator=(small_vector_no_copy_and_move&& other) = delete;
+        small_vector_2() = default;
+        small_vector_2(const small_vector_2& other) = delete;
+        small_vector_2& operator=(const small_vector_2& other) = delete;
+        small_vector_2(small_vector_2&& other) = delete;
+        small_vector_2& operator=(small_vector_2&& other) = delete;
     };
 } // namespace pkpy

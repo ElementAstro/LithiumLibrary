@@ -131,7 +131,7 @@ namespace pkpy{
         }
     }
 
-    int CodeEmitContext::add_const(PyObject* v){
+    int CodeEmitContext::add_const(PyVar v){
         if(is_type(v, vm->tp_str)){
             // warning: should use add_const_string() instead
             return add_const_string(PK_OBJ_GET(Str, v).sv());
@@ -659,7 +659,7 @@ namespace pkpy{
         }
     }
 
-    void BinaryExpr::_emit_compare(CodeEmitContext* ctx, pod_vector<int>& jmps){
+    void BinaryExpr::_emit_compare(CodeEmitContext* ctx, small_vector_2<int, 6>& jmps){
         if(lhs->is_compare()){
             static_cast<BinaryExpr*>(lhs.get())->_emit_compare(ctx, jmps);
         }else{
@@ -683,7 +683,7 @@ namespace pkpy{
     }
 
     void BinaryExpr::emit_(CodeEmitContext* ctx) {
-        pod_vector<int> jmps;
+        small_vector_2<int, 6> jmps;
         if(is_compare() && lhs->is_compare()){
             // (a < b) < c
             static_cast<BinaryExpr*>(lhs.get())->_emit_compare(ctx, jmps);
