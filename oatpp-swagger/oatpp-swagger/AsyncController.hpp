@@ -32,10 +32,10 @@
 #include "oatpp/web/protocol/http/outgoing/StreamingBody.hpp"
 #include "oatpp/web/server/api/ApiController.hpp"
 
-#include "oatpp/parser/json/mapping/ObjectMapper.hpp"
+#include "oatpp/json/ObjectMapper.hpp"
 
-#include "oatpp/core/macro/codegen.hpp"
-#include "oatpp/core/macro/component.hpp"
+#include "oatpp/macro/codegen.hpp"
+#include "oatpp/macro/component.hpp"
 
 namespace oatpp { namespace swagger {
 
@@ -79,20 +79,17 @@ public:
    */
   static std::shared_ptr<AsyncController> createShared(const web::server::api::Endpoints& endpointsList,
                                                        OATPP_COMPONENT(std::shared_ptr<oatpp::swagger::DocumentInfo>, documentInfo),
-                                                       OATPP_COMPONENT(std::shared_ptr<oatpp::swagger::Resources>, resources)){
-    
-    auto serializerConfig = oatpp::parser::json::mapping::Serializer::Config::createShared();
-    serializerConfig->includeNullFields = false;
-    
-    auto deserializerConfig = oatpp::parser::json::mapping::Deserializer::Config::createShared();
-    deserializerConfig->allowUnknownFields = false;
-    
-    auto objectMapper = oatpp::parser::json::mapping::ObjectMapper::createShared(serializerConfig, deserializerConfig);
+                                                       OATPP_COMPONENT(std::shared_ptr<oatpp::swagger::Resources>, resources))
+  {
+
+    auto objectMapper = std::make_shared<oatpp::json::ObjectMapper>();
+    objectMapper->serializerConfig().mapper.includeNullFields = false;
+    objectMapper->deserializerConfig().mapper.allowUnknownFields = false;
 
     std::shared_ptr<Generator::Config> generatorConfig;
     try {
       generatorConfig = OATPP_GET_COMPONENT(std::shared_ptr<Generator::Config>);
-    } catch (std::runtime_error e) {
+    } catch (std::runtime_error) {
       generatorConfig = std::make_shared<Generator::Config>();
     }
 
@@ -127,20 +124,22 @@ public:
     ENDPOINT_ASYNC_INIT(GetUIRoot)
     
     Action act() override {
-      std::string ui;
-      if(controller->m_resources->isStreaming()) {
-        v_char8 buffer[1024];
-        auto fileStream = controller->m_resources->getResourceStream("index.html");
-        oatpp::data::stream::BufferOutputStream s(1024);
-        oatpp::data::stream::transfer(fileStream, &s, 0, buffer, 1024);
-        ui = s.toString();
-      } else {
-        ui = * controller->m_resources->getResource("index.html"); // * - copy of the index.html
-      }
-      ui.replace(ui.find("%%API.JSON%%"), 12, controller->m_paths.apiJson);
+      auto ui = controller->m_resources->getResourceData("index.html");
       return _return(controller->createResponse(Status::CODE_200, ui));
     }
     
+  };
+
+  ENDPOINT_ASYNC("GET", m_paths.initializer, GetInitializer) {
+
+  ENDPOINT_ASYNC_INIT(GetInitializer)
+
+    Action act() override {
+      std::string ui = controller->m_resources->getResourceData("swagger-initializer.js");
+      ui.replace(ui.find("%%API.JSON%%"), 12, controller->m_paths.apiJson);
+      return _return(controller->createResponse(Status::CODE_200, ui));
+    }
+
   };
   
   ENDPOINT_ASYNC("GET", m_paths.uiResources, GetUIResource) {
@@ -150,18 +149,14 @@ public:
     Action act() override {
       auto filename = request->getPathVariable("filename");
       OATPP_ASSERT_HTTP(filename, Status::CODE_400, "filename should not be null")
-      if(controller->m_resources->isStreaming()) {
-        auto body = std::make_shared<oatpp::web::protocol::http::outgoing::StreamingBody>(
-          controller->m_resources->getResourceStream(filename->c_str())
-        );
-        auto resp = OutgoingResponse::createShared(Status::CODE_200, body);
-        resp->putHeader("Content-Type", controller->m_resources->getMimeType(filename));
-        return _return(resp);
-      }
-      auto resp = controller->createResponse(Status::CODE_200,
-                                               controller->m_resources->getResource(filename->c_str()));
+
+      auto body = std::make_shared<oatpp::web::protocol::http::outgoing::StreamingBody>(
+        controller->m_resources->getResource(filename)->openInputStream()
+      );
+      auto resp = OutgoingResponse::createShared(Status::CODE_200, body);
       resp->putHeader("Content-Type", controller->m_resources->getMimeType(filename));
       return _return(resp);
+
     }
     
   };

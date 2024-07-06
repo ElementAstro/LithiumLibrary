@@ -227,19 +227,20 @@ const auto& OATPP_MACRO_FIRSTARG PARAM_LIST = __request->readBodyToString();
 #define OATPP_MACRO_API_CONTROLLER_BODY_STRING_INFO(TYPE, PARAM_LIST) \
 info->body.name = OATPP_MACRO_FIRSTARG_STR PARAM_LIST; \
 info->body.required = true; \
-info->body.type = oatpp::data::mapping::type::__class::String::getType(); \
-if(getDefaultObjectMapper()) { \
-  info->bodyContentType = getDefaultObjectMapper()->getInfo().http_content_type; \
+info->body.type = oatpp::data::type::__class::String::getType(); \
+if(getContentMappers()->getDefaultMapper()) { \
+  info->bodyContentType = getContentMappers()->getDefaultMapper()->getInfo().httpContentType; \
 }
 
 // BODY_DTO MACRO // ------------------------------------------------------
 
 #define OATPP_MACRO_API_CONTROLLER_BODY_DTO(TYPE, PARAM_LIST) \
-if(!getDefaultObjectMapper()) { \
-  throw oatpp::web::protocol::http::HttpError(Status::CODE_500, "ObjectMapper was NOT set. Can't deserialize the request body."); \
+const auto& __bodyMapper = getContentMappers()->selectMapperForContent(__request->getHeader(oatpp::web::protocol::http::Header::CONTENT_TYPE)); \
+if(!__bodyMapper) { \
+  throw oatpp::web::protocol::http::HttpError(Status::CODE_500, "No suitable mapper found to deserialize the request body."); \
 } \
 const auto& OATPP_MACRO_FIRSTARG PARAM_LIST = \
-__request->readBodyToDto<TYPE>(getDefaultObjectMapper().get()); \
+__request->readBodyToDto<TYPE>(__bodyMapper.get()); \
 if(!OATPP_MACRO_FIRSTARG PARAM_LIST) { \
   throw oatpp::web::protocol::http::HttpError(Status::CODE_400, "Missing valid body parameter '" OATPP_MACRO_FIRSTARG_STR PARAM_LIST "'"); \
 }
@@ -250,8 +251,8 @@ if(!OATPP_MACRO_FIRSTARG PARAM_LIST) { \
 info->body.name = OATPP_MACRO_FIRSTARG_STR PARAM_LIST; \
 info->body.required = true; \
 info->body.type = TYPE::Class::getType(); \
-if(getDefaultObjectMapper()) { \
-  info->bodyContentType = getDefaultObjectMapper()->getInfo().http_content_type; \
+if(getContentMappers()->getDefaultMapper()) { \
+  info->bodyContentType = getContentMappers()->getDefaultMapper()->getInfo().httpContentType; \
 }
 
 // FOR EACH // ------------------------------------------------------

@@ -24,6 +24,8 @@
 
 #include "ConnectionMonitor.hpp"
 
+#include "oatpp/base/Log.hpp"
+
 #include <chrono>
 #include <thread>
 
@@ -45,7 +47,7 @@ ConnectionMonitor::ConnectionProxy::ConnectionProxy(const std::shared_ptr<Monito
   : m_monitor(monitor)
   , m_connectionHandle(connectionHandle)
 {
-  m_stats.timestampCreated = base::Environment::getMicroTickCount();
+  m_stats.timestampCreated = oatpp::Environment::getMicroTickCount();
 }
 
 ConnectionMonitor::ConnectionProxy::~ConnectionProxy() {
@@ -59,8 +61,8 @@ ConnectionMonitor::ConnectionProxy::~ConnectionProxy() {
   if(m_stats.metricsData.size() > 0) {
 
     for(auto& pair : m_stats.metricsData) {
-      OATPP_LOGE("[oatpp::network::ConnectionMonitor::ConnectionProxy::~ConnectionProxy()]",
-                 "Error. Memory leak. Metric data was not deleted: Metric name - '%s'", pair.first->c_str())
+      OATPP_LOGe("[oatpp::network::ConnectionMonitor::ConnectionProxy::~ConnectionProxy()]",
+                 "Error. Memory leak. Metric data was not deleted: Metric name - '{}'", pair.first->c_str())
     }
 
   }
@@ -118,7 +120,7 @@ void ConnectionMonitor::Monitor::monitorTask(std::shared_ptr<Monitor> monitor) {
 
       std::lock_guard<std::mutex> lock(monitor->m_connectionsMutex);
 
-      auto currMicroTime = oatpp::base::Environment::getMicroTickCount();
+      auto currMicroTime = oatpp::Environment::getMicroTickCount();
 
       for(auto& caddr : monitor->m_connections) {
 
@@ -186,8 +188,8 @@ void ConnectionMonitor::Monitor::freeConnectionStats(ConnectionStats& stats) {
     if(it != m_statCollectors.end()) {
       it->second->deleteMetricData(metric.second);
     } else {
-      OATPP_LOGE("[oatpp::network::ConnectionMonitor::Monitor::freeConnectionStats]",
-                 "Error. Can't free Metric data. Unknown Metric: name - '%s'", metric.first->c_str())
+      OATPP_LOGe("[oatpp::network::ConnectionMonitor::Monitor::freeConnectionStats]",
+                 "Error. Can't free Metric data. Unknown Metric: name - '{}'", metric.first->c_str())
     }
   }
 
@@ -230,7 +232,7 @@ void ConnectionMonitor::Monitor::addMetricsChecker(const std::shared_ptr<Metrics
 
 void ConnectionMonitor::Monitor::onConnectionRead(ConnectionStats& stats, v_io_size readResult) {
 
-  v_int64 currTimestamp = base::Environment::getMicroTickCount();
+  v_int64 currTimestamp = oatpp::Environment::getMicroTickCount();
 
   if(readResult > 0) {
     stats.totalRead += readResult;
@@ -249,7 +251,7 @@ void ConnectionMonitor::Monitor::onConnectionRead(ConnectionStats& stats, v_io_s
 
 void ConnectionMonitor::Monitor::onConnectionWrite(ConnectionStats& stats, v_io_size writeResult) {
 
-  v_int64 currTimestamp = base::Environment::getMicroTickCount();
+  v_int64 currTimestamp = oatpp::Environment::getMicroTickCount();
 
   if(writeResult > 0) {
     stats.totalWrite += writeResult;

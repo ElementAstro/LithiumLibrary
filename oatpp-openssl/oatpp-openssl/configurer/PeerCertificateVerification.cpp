@@ -40,7 +40,6 @@ static int toSslVerify(CertificateVerificationMode mode) {
     case CertificateVerificationMode::Disabled:
       return SSL_VERIFY_NONE;
   }
-  return SSL_VERIFY_NONE;
 }
 
 void PeerCertificateVerification::configure(SSL_CTX *ctx) {

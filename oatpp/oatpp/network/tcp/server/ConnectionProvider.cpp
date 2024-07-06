@@ -24,7 +24,8 @@
 
 #include "./ConnectionProvider.hpp"
 
-#include "oatpp/core/utils/ConversionUtils.hpp"
+#include "oatpp/utils/Conversion.hpp"
+#include "oatpp/base/Log.hpp"
 
 #include <fcntl.h>
 
@@ -129,7 +130,7 @@ ConnectionProvider::ConnectionProvider(const network::Address& address, bool use
         , m_useExtendedConnections(useExtendedConnections)
 {
   setProperty(PROPERTY_HOST, m_address.host);
-  setProperty(PROPERTY_PORT, oatpp::utils::conversion::int32ToStr(m_address.port));
+  setProperty(PROPERTY_PORT, oatpp::utils::Conversion::int32ToStr(m_address.port));
   m_serverHandle = instantiateServer();
 }
 
@@ -174,11 +175,11 @@ oatpp::v_io_handle ConnectionProvider::instantiateServer(){
       hints.ai_family = AF_UNSPEC;
   }
 
-  auto portStr = oatpp::utils::conversion::int32ToStr(m_address.port);
+  auto portStr = oatpp::utils::Conversion::int32ToStr(m_address.port);
 
   const int iResult = getaddrinfo(m_address.host->c_str(), portStr->c_str(), &hints, &result);
   if (iResult != 0) {
-    OATPP_LOGE("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]", "Error. Call to getaddrinfo() failed with result=%d", iResult)
+    OATPP_LOGe("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]", "Error. Call to getaddrinfo() failed with result={}", iResult)
     throw std::runtime_error("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]: Error. Call to getaddrinfo() failed.");
   }
 
@@ -195,8 +196,8 @@ oatpp::v_io_handle ConnectionProvider::instantiateServer(){
         if (setsockopt(serverHandle, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&no, sizeof( int ) ) != 0 ) {
           const size_t buflen = 500;
           char buf[buflen];
-          OATPP_LOGW("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]",
-                     "Warning. Failed to set %s for accepting socket: %s", "IPV6_V6ONLY",
+          OATPP_LOGw("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]",
+                     "Warning. Failed to set {} for accepting socket: {}", "IPV6_V6ONLY",
                      strerror_s(buf, buflen, errno))
         }
       }
@@ -218,8 +219,8 @@ oatpp::v_io_handle ConnectionProvider::instantiateServer(){
   freeaddrinfo(result);
 
   if (currResult == nullptr) {
-    OATPP_LOGE("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]",
-               "Error. Couldn't bind. WSAGetLastError=%ld", WSAGetLastError())
+    OATPP_LOGe("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]",
+               "Error. Couldn't bind. WSAGetLastError={}", WSAGetLastError())
     throw std::runtime_error("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]: "
                              "Error. Couldn't bind ");
   }
@@ -234,7 +235,7 @@ oatpp::v_io_handle ConnectionProvider::instantiateServer(){
   ::memset(&s_in, 0, sizeof(s_in));
   oatpp::v_sock_size s_in_len = sizeof(s_in);
   ::getsockname(serverHandle, (struct sockaddr *)&s_in, &s_in_len);
-  setProperty(PROPERTY_PORT, oatpp::utils::conversion::int32ToStr(ntohs(s_in.sin_port)));
+  setProperty(PROPERTY_PORT, oatpp::utils::Conversion::int32ToStr(ntohs(s_in.sin_port)));
 
   return serverHandle;
 
@@ -264,11 +265,11 @@ oatpp::v_io_handle ConnectionProvider::instantiateServer(){
       hints.ai_family = AF_UNSPEC;
   }
 
-  auto portStr = oatpp::utils::conversion::int32ToStr(m_address.port);
+  auto portStr = oatpp::utils::Conversion::int32ToStr(m_address.port);
 
   ret = getaddrinfo(m_address.host->c_str(), portStr->c_str(), &hints, &result);
   if (ret != 0) {
-    OATPP_LOGE("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]", "Error. Call to getaddrinfo() failed with result=%d: %s", ret, strerror(errno))
+    OATPP_LOGe("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]", "Error. Call to getaddrinfo() failed with result={}: {}", ret, strerror(errno))
     throw std::runtime_error("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]: Error. Call to getaddrinfo() failed.");
   }
 
@@ -280,11 +281,11 @@ oatpp::v_io_handle ConnectionProvider::instantiateServer(){
     if (serverHandle >= 0) {
 
       if (setsockopt(serverHandle, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) != 0) {
-        OATPP_LOGW("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]",
-                   "Warning. Failed to set %s for accepting socket: %s", "SO_REUSEADDR", strerror(errno))
+        OATPP_LOGw("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]",
+                   "Warning. Failed to set {} for accepting socket: {}", "SO_REUSEADDR", strerror(errno))
       }
 
-      if (bind(serverHandle, currResult->ai_addr, static_cast<v_sock_size>(currResult->ai_addrlen)) == 0 &&
+      if (bind(serverHandle, currResult->ai_addr, currResult->ai_addrlen) == 0 &&
           listen(serverHandle, 10000) == 0)
       {
         break;
@@ -302,8 +303,8 @@ oatpp::v_io_handle ConnectionProvider::instantiateServer(){
 
   if (currResult == nullptr) {
     std::string err = strerror(errno);
-    OATPP_LOGE("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]",
-               "Error. Couldn't bind. %s", err.c_str())
+    OATPP_LOGe("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]",
+               "Error. Couldn't bind. {}", err.c_str())
     throw std::runtime_error("[oatpp::network::tcp::server::ConnectionProvider::instantiateServer()]: "
                              "Error. Couldn't bind " + err);
   }
@@ -315,7 +316,7 @@ oatpp::v_io_handle ConnectionProvider::instantiateServer(){
   ::memset(&s_in, 0, sizeof(s_in));
   oatpp::v_sock_size s_in_len = sizeof(s_in);//FIXME trace
   ::getsockname(serverHandle, reinterpret_cast<sockaddr*>(&s_in), &s_in_len);
-  setProperty(PROPERTY_PORT, oatpp::utils::conversion::int32ToStr(ntohs(s_in.sin_port)));
+  setProperty(PROPERTY_PORT, oatpp::utils::Conversion::int32ToStr(ntohs(s_in.sin_port)));
 
   return serverHandle;
 
@@ -329,7 +330,7 @@ void ConnectionProvider::prepareConnectionHandle(oatpp::v_io_handle handle) {
   int yes = 1;
   v_int32 ret = setsockopt(handle, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(int));
   if(ret < 0) {
-    OATPP_LOGD("[oatpp::network::tcp::server::ConnectionProvider::prepareConnectionHandle()]", "Warning. Failed to set %s for socket", "SO_NOSIGPIPE")
+    OATPP_LOGd("[oatpp::network::tcp::server::ConnectionProvider::prepareConnectionHandle()]", "Warning. Failed to set {} for socket", "SO_NOSIGPIPE")
   }
 #endif
 
@@ -377,7 +378,7 @@ provider::ResourceHandle<data::stream::IOStream> ConnectionProvider::getExtended
 
     properties.put_LockFree(ExtendedConnection::PROPERTY_PEER_ADDRESS, oatpp::String(reinterpret_cast<const char*>(strIp)));
     properties.put_LockFree(ExtendedConnection::PROPERTY_PEER_ADDRESS_FORMAT, "ipv4");
-    properties.put_LockFree(ExtendedConnection::PROPERTY_PEER_PORT, oatpp::utils::conversion::int32ToStr(sockAddress->sin_port));
+    properties.put_LockFree(ExtendedConnection::PROPERTY_PEER_PORT, oatpp::utils::Conversion::int32ToStr(sockAddress->sin_port));
 
   } else if (clientAddress.ss_family == AF_INET6) {
 
@@ -387,7 +388,7 @@ provider::ResourceHandle<data::stream::IOStream> ConnectionProvider::getExtended
 
     properties.put_LockFree(ExtendedConnection::PROPERTY_PEER_ADDRESS, oatpp::String(reinterpret_cast<const char*>(strIp)));
     properties.put_LockFree(ExtendedConnection::PROPERTY_PEER_ADDRESS_FORMAT, "ipv6");
-    properties.put_LockFree(ExtendedConnection::PROPERTY_PEER_PORT, oatpp::utils::conversion::int32ToStr(sockAddress->sin6_port));
+    properties.put_LockFree(ExtendedConnection::PROPERTY_PEER_PORT, oatpp::utils::Conversion::int32ToStr(sockAddress->sin6_port));
 
   } else {
 
@@ -397,7 +398,7 @@ provider::ResourceHandle<data::stream::IOStream> ConnectionProvider::getExtended
     ::close(handle);
 #endif
 
-    OATPP_LOGE("[oatpp::network::tcp::server::ConnectionProvider::getExtendedConnection()]", "Error. Unknown address family.")
+    OATPP_LOGe("[oatpp::network::tcp::server::ConnectionProvider::getExtendedConnection()]", "Error. Unknown address family.")
     return nullptr;
 
   }

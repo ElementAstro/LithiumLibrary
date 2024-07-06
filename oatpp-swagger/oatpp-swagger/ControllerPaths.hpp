@@ -25,7 +25,7 @@
 #ifndef oatpp_swagger_ControllerPaths_hpp
 #define oatpp_swagger_ControllerPaths_hpp
 
-#include "oatpp/core/Types.hpp"
+#include "oatpp/Types.hpp"
 
 namespace oatpp { namespace swagger {
 
@@ -43,6 +43,11 @@ struct ControllerPaths {
    * Path to swagger UI (index.html).
    */
   oatpp::String ui = "swagger/ui";
+
+  /**
+   * Path to swagger UI (swagger-initializer.js).
+   */
+  oatpp::String initializer = "swagger/swagger-initializer.js";
 
   /**
    * Path to other ui resources. MUST contain `/{filename}` at the end.

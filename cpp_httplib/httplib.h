@@ -8,7 +8,7 @@
 #ifndef CPPHTTPLIB_HTTPLIB_H
 #define CPPHTTPLIB_HTTPLIB_H
 
-#define CPPHTTPLIB_VERSION "0.15.3"
+#define CPPHTTPLIB_VERSION "0.16.0"
 
 /*
  * Configuration
@@ -726,6 +726,10 @@ private:
         assert(true == static_cast<bool>(fn));
         fn();
       }
+
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+      OPENSSL_thread_stop ();
+#endif
     }
 
     ThreadPool &pool_;
@@ -1526,6 +1530,7 @@ public:
                   const std::string &client_key_path);
 
   Client(Client &&) = default;
+  Client &operator=(Client &&) = default;
 
   ~Client();
 
@@ -1819,6 +1824,9 @@ public:
   bool is_valid() const override;
 
   SSL_CTX *ssl_context() const;
+  
+  void update_certs (X509 *cert, EVP_PKEY *private_key,
+            X509_STORE *client_ca_cert_store = nullptr);
 
 private:
   bool process_and_close_socket(socket_t sock) override;

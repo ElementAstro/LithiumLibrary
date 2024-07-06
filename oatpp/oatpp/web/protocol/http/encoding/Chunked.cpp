@@ -24,7 +24,7 @@
 
 #include "Chunked.hpp"
 
-#include "oatpp/core/utils/ConversionUtils.hpp"
+#include "oatpp/utils/Conversion.hpp"
 
 namespace oatpp { namespace web { namespace protocol { namespace http { namespace encoding {
 
@@ -65,11 +65,11 @@ v_int32 EncoderChunked::iterate(data::buffer::InlineReadData& dataIn, data::buff
         stream.write("\r\n", 2, action);
       }
 
-      stream << utils::conversion::primitiveToStr(dataIn.bytesLeft, "%X");
+      stream << utils::Conversion::primitiveToStr(dataIn.bytesLeft, "%X");
       stream.write("\r\n", 2, action);
 
       m_chunkHeader = stream.toString();
-      dataOut.set(reinterpret_cast<p_char8>(const_cast<char*>(m_chunkHeader->data())), static_cast<v_buff_size>(m_chunkHeader->size()));
+      dataOut.set(reinterpret_cast<p_char8>(m_chunkHeader->data()), static_cast<v_buff_size>(m_chunkHeader->size()));
 
       m_firstChunk = false;
       m_writeChunkHeader = false;
@@ -96,7 +96,7 @@ v_int32 EncoderChunked::iterate(data::buffer::InlineReadData& dataIn, data::buff
     stream.write("0\r\n\r\n", 5, action);
 
     m_chunkHeader = stream.toString();
-    dataOut.set(reinterpret_cast<p_char8>(const_cast<char*>(m_chunkHeader->data())), static_cast<v_buff_size>(m_chunkHeader->size()));
+    dataOut.set(reinterpret_cast<p_char8>(m_chunkHeader->data()), static_cast<v_buff_size>(m_chunkHeader->size()));
 
     m_firstChunk = false;
     m_writeChunkHeader = false;

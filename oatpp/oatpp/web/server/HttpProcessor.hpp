@@ -39,8 +39,8 @@
 #include "oatpp/web/protocol/http/outgoing/Response.hpp"
 #include "oatpp/web/protocol/http/utils/CommunicationUtils.hpp"
 
-#include "oatpp/core/data/stream/StreamBufferedProxy.hpp"
-#include "oatpp/core/async/Processor.hpp"
+#include "oatpp/data/stream/StreamBufferedProxy.hpp"
+#include "oatpp/async/Processor.hpp"
 
 namespace oatpp { namespace web { namespace server {
 
@@ -264,6 +264,8 @@ public:
     std::shared_ptr<protocol::http::incoming::Request> m_currentRequest;
     std::shared_ptr<protocol::http::outgoing::Response> m_currentResponse;
     TaskProcessingListener* m_taskListener;
+  private:
+    bool m_shouldInterceptResponse;
   public:
 
     /**

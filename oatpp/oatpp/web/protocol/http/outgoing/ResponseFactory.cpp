@@ -44,7 +44,7 @@ ResponseFactory::createResponse(const Status& status,
                                 const std::shared_ptr<data::mapping::ObjectMapper>& objectMapper) {
   return Response::createShared(status, BufferBody::createShared(
     objectMapper->writeToString(dto),
-    objectMapper->getInfo().http_content_type
+    objectMapper->getInfo().httpContentType
   ));
 }
 

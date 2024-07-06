@@ -1,7 +1,4 @@
 #include "httplib.h"
-#ifdef _WIN32
-#include <windows.h>
-#endif
 namespace httplib {
 
 /*
@@ -434,28 +431,48 @@ bool mmap::open(const char *path) {
   for (size_t i = 0; i < strlen(path); i++) {
     wpath += path[i];
   }
-#if defined(__MINGW64__)
-  hFile_ = ::CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ,
-                         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-#else
+
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP | WINAPI_PARTITION_SYSTEM | WINAPI_PARTITION_GAMES) && (_WIN32_WINNT >= _WIN32_WINNT_WIN8)
   hFile_ = ::CreateFile2(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ,
                          OPEN_EXISTING, NULL);
+#else
+  hFile_ = ::CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 #endif
+
   if (hFile_ == INVALID_HANDLE_VALUE) { return false; }
 
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP | WINAPI_PARTITION_SYSTEM | WINAPI_PARTITION_GAMES)
   LARGE_INTEGER size{};
   if (!::GetFileSizeEx(hFile_, &size)) { return false; }
   size_ = static_cast<size_t>(size.QuadPart);
+#else
+  DWORD sizeHigh;
+  DWORD sizeLow;
+  sizeLow = ::GetFileSize(hFile_, &sizeHigh);
+  if (sizeLow == INVALID_FILE_SIZE) { return false; }
+  size_ = (static_cast<size_t>(sizeHigh) << (sizeof(DWORD) * 8)) | sizeLow;
+#endif
 
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP | WINAPI_PARTITION_SYSTEM) && (_WIN32_WINNT >= _WIN32_WINNT_WIN8)
   hMapping_ =
       ::CreateFileMappingFromApp(hFile_, NULL, PAGE_READONLY, size_, NULL);
+#else
+  hMapping_ =
+      ::CreateFileMappingW(hFile_, NULL, PAGE_READONLY, size.HighPart,
+                           size.LowPart, NULL);
+#endif
 
   if (hMapping_ == NULL) {
     close();
     return false;
   }
 
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP | WINAPI_PARTITION_SYSTEM) && (_WIN32_WINNT >= _WIN32_WINNT_WIN8)
   addr_ = ::MapViewOfFileFromApp(hMapping_, FILE_MAP_READ, 0, 0);
+#else
+  addr_ = ::MapViewOfFile(hMapping_, FILE_MAP_READ, 0, 0, 0);
+#endif
 #else
   fd_ = ::open(path, O_RDONLY);
   if (fd_ == -1) { return false; }
@@ -2557,7 +2574,7 @@ get_range_offset_and_length(Range r, size_t content_length) {
   assert(0 <= r.first && r.first < static_cast<ssize_t>(content_length));
   assert(r.first <= r.second &&
          r.second < static_cast<ssize_t>(content_length));
-
+  (void)(content_length);
   return std::make_pair(r.first, static_cast<size_t>(r.second - r.first) + 1);
 }
 
@@ -4890,7 +4907,7 @@ bool ClientImpl::redirect(Request &req, Response &res, Error &error) {
   if (location.empty()) { return false; }
 
   const static std::regex re(
-      R"((?:(https?):)?(?://(?:\[([\d:]+)\]|([^:/?#]+))(?::(\d+))?)?([^?#]*)(\?[^#]*)?(?:#.*)?)");
+      R"((?:(https?):)?(?://(?:\[([a-fA-F\d:]+)\]|([^:/?#]+))(?::(\d+))?)?([^?#]*)(\?[^#]*)?(?:#.*)?)");
 
   std::smatch m;
   if (!std::regex_match(location, m, re)) { return false; }
@@ -6375,6 +6392,19 @@ bool SSLServer::is_valid() const { return ctx_; }
 
 SSL_CTX *SSLServer::ssl_context() const { return ctx_; }
 
+void SSLServer::update_certs (X509 *cert, EVP_PKEY *private_key,
+            X509_STORE *client_ca_cert_store) {
+
+    std::lock_guard<std::mutex> guard(ctx_mutex_);
+
+    SSL_CTX_use_certificate (ctx_, cert);
+    SSL_CTX_use_PrivateKey  (ctx_, private_key);
+
+    if (client_ca_cert_store != nullptr) {
+        SSL_CTX_set_cert_store  (ctx_, client_ca_cert_store);
+    }
+}
+
 bool SSLServer::process_and_close_socket(socket_t sock) {
   auto ssl = detail::ssl_new(
       sock, ctx_, ctx_mutex_,
@@ -6835,7 +6865,7 @@ Client::Client(const std::string &scheme_host_port,
                       const std::string &client_cert_path,
                       const std::string &client_key_path) {
   const static std::regex re(
-      R"((?:([a-z]+):\/\/)?(?:\[([\d:]+)\]|([^:/?#]+))(?::(\d+))?)");
+      R"((?:([a-z]+):\/\/)?(?:\[([a-fA-F\d:]+)\]|([^:/?#]+))(?::(\d+))?)");
 
   std::smatch m;
   if (std::regex_match(scheme_host_port, m, re)) {
@@ -6872,6 +6902,8 @@ Client::Client(const std::string &scheme_host_port,
                                              client_key_path);
     }
   } else {
+    // NOTE: Update TEST(UniversalClientImplTest, Ipv6LiteralAddress)
+    // if port param below changes.
     cli_ = detail::make_unique<ClientImpl>(scheme_host_port, 80,
                                            client_cert_path, client_key_path);
   }
