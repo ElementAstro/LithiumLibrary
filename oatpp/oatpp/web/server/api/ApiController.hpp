@@ -451,6 +451,8 @@ public:
    * @return
    */
   const std::shared_ptr<mime::ContentMappers>& getContentMappers() const;
+
+  std::shared_ptr<ObjectMapper> getDefaultObjectMapper() const;
   
   // Helper methods
   

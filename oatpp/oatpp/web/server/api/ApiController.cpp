@@ -89,6 +89,10 @@ const std::shared_ptr<mime::ContentMappers>& ApiController::getContentMappers() 
   return m_contentMappers;
 }
 
+std::shared_ptr<data::mapping::ObjectMapper> ApiController::getDefaultObjectMapper() const {
+  return m_contentMappers->getDefaultMapper();
+}
+
 // Helper methods
 
 std::shared_ptr<ApiController::OutgoingResponse> ApiController::createResponse(const Status& status, const oatpp::String& str) const {
