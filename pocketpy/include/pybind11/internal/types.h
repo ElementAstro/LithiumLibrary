@@ -49,6 +49,11 @@ public:
         return type_visitor::type<T>();
     }
 
+    template <typename T>
+    static type of() {
+        return type_visitor::type<T>();
+    }
+
     static type of(const handle& obj) { return type(vm->_t(obj.ptr())); }
 };
 
@@ -360,8 +365,9 @@ class capsule : public object {
     PYBIND11_TYPE_IMPLEMENT(object, impl::capsule, handle(vm->builtins->attr("capsule"))._as<pkpy::Type>());
 
 public:
-    template <typename T>
-    capsule(T&& value) : object(create(std::forward<T>(value))) {}
+    capsule(void* ptr, void (*destructor)(void*) = nullptr) : object(create(ptr, destructor)) {}
+
+    void* data() const { return self().ptr; }
 
     template <typename T>
     T& cast() const {
@@ -385,11 +391,11 @@ public:
 };
 
 class args : public tuple {
-    PYBIND11_TYPE_IMPLEMENT(tuple, struct empty, vm->tp_tuple);
+    PYBIND11_TYPE_IMPLEMENT(tuple, pybind11::empty, vm->tp_tuple);
 };
 
 class kwargs : public dict {
-    PYBIND11_TYPE_IMPLEMENT(dict, struct empty, vm->tp_dict);
+    PYBIND11_TYPE_IMPLEMENT(dict, pybind11::empty, vm->tp_dict);
 };
 
 }  // namespace pybind11
