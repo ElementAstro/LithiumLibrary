@@ -2,97 +2,74 @@ cmake_minimum_required(VERSION 3.10)
 
 project(pocketpy)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# use IPO
+include(CheckIPOSupported)
+check_ipo_supported(RESULT result)
+
+if(result AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+else()
+    message(WARNING ">> IPO disabled. You will not get the best performance.")
+endif()
 
 if(MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHsc /utf-8 /O2")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /utf-8 /jumptablerdata /GS-")
+    add_compile_options(/wd4267 /wd4244)
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /Ox")
+        add_definitions(-DNDEBUG)
+    endif()
 else()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -frtti -O2")
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
+        add_definitions(-DNDEBUG)
+    endif()
 
     # disable -Wshorten-64-to-32 for apple
     if(APPLE)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-shorten-64-to-32")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-shorten-64-to-32")
     endif()
 endif()
 
-aux_source_directory(${CMAKE_CURRENT_LIST_DIR}/src POCKETPY_SRC)
-
-option(PK_USE_CJSON "" OFF)
-if(PK_USE_CJSON)
-    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/3rd/cjson)
-    add_definitions(-DPK_USE_CJSON)
-endif()
+include_directories(${CMAKE_CURRENT_LIST_DIR}/include)
+file(GLOB_RECURSE POCKETPY_SRC ${CMAKE_CURRENT_LIST_DIR}/src/*.c)
 
 option(PK_ENABLE_OS "" OFF)
 if(PK_ENABLE_OS)
     add_definitions(-DPK_ENABLE_OS=1)
 endif()
 
-option(PK_ENABLE_PROFILER "" OFF)
-if(PK_ENABLE_PROFILER)
-    add_definitions(-DPK_ENABLE_PROFILER=1)
-endif()
-
-option(PK_NO_EXPORT_C_API "" OFF)
-if(PK_NO_EXPORT_C_API)
-    add_definitions(-DPK_NO_EXPORT_C_API)
-endif()
-
 # PK_IS_MAIN determines whether the project is being used from root
 # or if it is added as a dependency (through add_subdirectory for example).
 if ("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
-  set(PK_IS_MAIN TRUE)
-  option(PK_BUILD_SHARED_LIB "Build shared library" OFF)
-  option(PK_BUILD_STATIC_LIB "Build static library" OFF)
+    set(PK_IS_MAIN TRUE)
+    option(PK_BUILD_SHARED_LIB "Build shared library" OFF)
+    option(PK_BUILD_STATIC_LIB "Build static library" OFF)
 else()
-  set(PK_IS_MAIN FALSE)
-  option(PK_BUILD_SHARED_LIB "Build shared library" OFF)
-  option(PK_BUILD_STATIC_LIB "Build static library" ON)
+    set(PK_IS_MAIN FALSE)
+    option(PK_BUILD_SHARED_LIB "Build shared library" OFF)
+    option(PK_BUILD_STATIC_LIB "Build static library" ON)
 endif()
 
 if(PK_BUILD_SHARED_LIB)
+    message(">> Building shared library")
     add_library(${PROJECT_NAME} SHARED ${POCKETPY_SRC})
 elseif(PK_BUILD_STATIC_LIB)
+    message(">> Building static library")
     add_library(${PROJECT_NAME} STATIC ${POCKETPY_SRC})
 else()
+    message(">> Building shared library + executable")
     add_library(${PROJECT_NAME} SHARED ${POCKETPY_SRC})
-    set(PROJECT_EXE_NAME main)
-    add_executable(${PROJECT_EXE_NAME} src2/main.cpp)
-    target_link_libraries(${PROJECT_EXE_NAME} ${PROJECT_NAME})
-    target_link_libraries(${PROJECT_EXE_NAME} ${CMAKE_DL_LIBS})
+    add_executable(main src2/main.c)
+    target_link_libraries(main ${PROJECT_NAME})
 endif()
 
-target_include_directories(${PROJECT_NAME} PUBLIC 
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
-
-if(PK_USE_CJSON)
-    target_link_libraries(${PROJECT_NAME} PRIVATE $<BUILD_INTERFACE:cjson>)
-endif()
-
-option(PK_INSTALL "Generate the install target" OFF)
-if (PK_INSTALL)
-    install(
-        TARGETS ${PROJECT_NAME}
-        EXPORT ${PROJECT_NAME}_target
-        ARCHIVE DESTINATION lib
-        LIBRARY DESTINATION lib
-        RUNTIME DESTINATION bin
-    )
-
-    install(
-        DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ 
-        DESTINATION include 
-        FILES_MATCHING PATTERN "*.h"
-        PATTERN "typings" EXCLUDE
-    )
-    
-    # generate config.cmake
-    install(
-        EXPORT ${PROJECT_NAME}_target
-        FILE ${PROJECT_NAME}-config.cmake
-        DESTINATION "share/${PROJECT_NAME}"
-    )
+if(UNIX)
+    target_link_libraries(${PROJECT_NAME} m)
+    target_link_libraries(${PROJECT_NAME} dl)
 endif()

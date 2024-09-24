@@ -1,42 +1,12 @@
 #pragma once
+
 #include "builtins.h"
 
-namespace pybind11 {
-
-// implement iterator methods for interface
-template <typename Derived>
-inline iterator interface<Derived>::begin() const {
-    return handle(vm->py_iter(this->ptr()));
-}
-
-template <typename Derived>
-inline iterator interface<Derived>::end() const {
-    return iterator::sentinel();
-}
-
-template <typename Derived>
-inline str interface<Derived>::package() const {
-    return handle(this->attr(pkpy::__package__));
-}
-
-template <typename Derived>
-inline str interface<Derived>::name() const {
-    return handle(this->attr(pkpy::__name__));
-}
-
-template <typename Derived>
-inline str interface<Derived>::repr() const {
-    return handle(str(vm->py_repr(this->ptr())));
-}
+namespace pkbind {
 
 template <typename policy>
 class accessor : public interface<accessor<policy>> {
-
     using key_type = typename policy::key_type;
-
-    handle m_obj;
-    mutable handle m_value;
-    key_type m_key;
 
     friend interface<handle>;
     friend interface<accessor<policy>>;
@@ -44,17 +14,19 @@ class accessor : public interface<accessor<policy>> {
     friend list;
     friend dict;
 
-    accessor(const handle& obj, key_type key) : m_obj(obj), m_value(), m_key(key) {}
+    accessor(handle obj, key_type key) : m_obj(obj), m_value(), m_key(key) {}
 
 public:
-    pkpy::PyVar ptr() const {
-        if(!m_value) { m_value = policy::get(m_obj, m_key); }
+    auto ptr() const {
+        if(m_value.empty()) {
+            m_value = borrow(policy::get(m_obj, m_key));
+        }
         return m_value.ptr();
     }
 
     template <typename Value>
     accessor& operator= (Value&& value) && {
-        policy::set(m_obj, m_key, std::forward<Value>(value));
+        policy::set(m_obj, m_key, pkbind::cast(std::forward<Value>(value)));
         return *this;
     }
 
@@ -64,60 +36,82 @@ public:
         return *this;
     }
 
-    template <typename T>
-    T cast() const {
-        return operator handle ().template cast<T>();
-    }
-
     operator handle () const { return ptr(); }
+
+private:
+    handle m_obj;
+    mutable object m_value;
+    key_type m_key;
 };
 
 namespace policy {
+
 struct attr {
-    using key_type = pkpy::StrName;
+    using key_type = name;
 
-    static handle get(const handle& obj, pkpy::StrName key) { return vm->getattr(obj.ptr(), key); }
-
-    static void set(const handle& obj, pkpy::StrName key, const handle& value) {
-        vm->setattr(obj.ptr(), key, value.ptr());
+    static handle get(handle obj, name key) {
+        raise_call<py_getattr>(obj.ptr(), key.index());
+        return py_retval();
     }
+
+    static void set(handle obj, name key, handle value) { raise_call<py_setattr>(obj.ptr(), key.index(), value.ptr()); }
 };
 
+template <typename Key>
 struct item {
-    using key_type = handle;
+    using key_type = Key;
 
-    static handle get(const handle& obj, const handle& key) {
-        return vm->call(vm->py_op("getitem"), obj.ptr(), key.ptr());
+    static handle get(handle obj, int key) { return get(obj, int_(key)); }
+
+    static handle get(handle obj, name key) { return get(obj, str(key)); }
+
+    static handle get(handle obj, handle key) {
+        raise_call<py_getitem>(obj.ptr(), key.ptr());
+        return py_retval();
     }
 
-    static void set(const handle& obj, const handle& key, const handle& value) {
-        vm->call(vm->py_op("setitem"), obj.ptr(), key.ptr(), value.ptr());
-    }
+    static void set(handle obj, int key, handle value) { set(obj, int_(key), value); }
+
+    static void set(handle obj, name key, handle value) { set(obj, str(key), value); }
+
+    static void set(handle obj, handle key, handle value) { raise_call<py_setitem>(obj.ptr(), key.ptr(), value.ptr()); }
 };
 
 struct tuple {
     using key_type = int;
 
-    static handle get(const handle& obj, int key) { return obj._as<pkpy::Tuple>()[key]; }
+    static handle get(handle obj, int key) { return py_tuple_getitem(obj.ptr(), key); }
 
-    static void set(const handle& obj, size_t key, const handle& value) { obj._as<pkpy::Tuple>()[key] = value.ptr(); }
+    static void set(handle obj, int key, handle value) { py_tuple_setitem(obj.ptr(), key, value.ptr()); }
 };
 
 struct list {
     using key_type = int;
 
-    static handle get(const handle& obj, size_t key) { return obj._as<pkpy::List>()[key]; }
+    static handle get(handle obj, int key) { return py_list_getitem(obj.ptr(), key); }
 
-    static void set(const handle& obj, size_t key, const handle& value) { obj._as<pkpy::List>()[key] = value.ptr(); }
+    static void set(handle obj, int key, handle value) { py_list_setitem(obj.ptr(), key, value.ptr()); }
 };
 
+template <typename Key>
 struct dict {
-    using key_type = handle;
+    using key_type = Key;
 
-    static handle get(const handle& obj, const handle& key) { return obj.cast<pybind11::dict>().getitem(key); }
+    static handle get(handle obj, int key) { return get(obj, int_(key)); }
 
-    static void set(const handle& obj, const handle& key, const handle& value) {
-        obj.cast<pybind11::dict>().setitem(key, value);
+    static handle get(handle obj, name key) { return get(obj, str(key)); }
+
+    static handle get(handle obj, handle key) {
+        raise_call<py_dict_getitem>(obj.ptr(), key.ptr());
+        return py_retval();
+    }
+
+    static void set(handle obj, int key, handle value) { set(obj, int_(key), value); }
+
+    static void set(handle obj, name key, handle value) { set(obj, str(key), value); }
+
+    static void set(handle obj, handle key, handle value) {
+        raise_call<py_dict_setitem>(obj.ptr(), key.ptr(), value.ptr());
     }
 };
 
@@ -126,48 +120,45 @@ struct dict {
 // implement other methods of interface
 
 template <typename Derived>
-inline attr_accessor interface<Derived>::attr(pkpy::StrName key) const {
-    return attr_accessor(this->ptr(), key);
+inline attr_accessor interface<Derived>::attr(name key) const {
+    return {ptr(), key};
 }
 
 template <typename Derived>
-inline attr_accessor interface<Derived>::attr(const char* key) const {
-    return attr_accessor(this->ptr(), pkpy::StrName(key));
+inline item_accessor<int> interface<Derived>::operator[] (int key) const {
+    return {ptr(), key};
 }
 
 template <typename Derived>
-inline attr_accessor interface<Derived>::attr(const handle& key) const {
-    return attr_accessor(this->ptr(), pkpy::StrName(key._as<pkpy::Str>()));
+inline item_accessor<name> interface<Derived>::operator[] (name key) const {
+    return {ptr(), key};
 }
 
 template <typename Derived>
-inline attr_accessor interface<Derived>::doc() const {
-    return attr_accessor(this->ptr(), pkpy::StrName("__doc__"));
+inline item_accessor<handle> interface<Derived>::operator[] (handle key) const {
+    return {ptr(), key};
 }
 
-template <typename Derived>
-inline item_accessor interface<Derived>::operator[] (int index) const {
-    return item_accessor(this->ptr(), int_(index));
+template <typename... Args>
+object str::format(Args&&... args) {
+    return attr("format")(std::forward<Args>(args)...);
 }
 
-template <typename Derived>
-inline item_accessor interface<Derived>::operator[] (const char* key) const {
-    return item_accessor(this->ptr(), str(key));
+inline tuple_accessor tuple::operator[] (int index) const { return {m_ptr, index}; }
+
+inline list_accessor list::operator[] (int index) const { return {m_ptr, index}; };
+
+inline dict_accessor<int> dict::operator[] (int key) const { return {m_ptr, key}; }
+
+inline dict_accessor<name> dict::operator[] (name key) const { return {m_ptr, key}; }
+
+inline dict_accessor<handle> dict::operator[] (handle key) const { return {m_ptr, key}; }
+
+inline dict::iterator::iterator(handle h) : items(h.attr("items")()), iter(items.begin()) {}
+
+inline std::pair<object, object> dict::iterator::operator* () const {
+    tuple pair = *iter;
+    return {borrow(pair[0]), borrow(pair[1])};
 }
 
-template <typename Derived>
-inline item_accessor interface<Derived>::operator[] (const handle& key) const {
-    return item_accessor(this->ptr(), key);
-}
-
-inline tuple_accessor tuple::operator[] (int i) const { return tuple_accessor(this->ptr(), i); }
-
-inline list_accessor list::operator[] (int i) const { return list_accessor(this->ptr(), i); }
-
-inline dict_accessor dict::operator[] (int index) const { return dict_accessor(this->ptr(), int_(index)); }
-
-inline dict_accessor dict::operator[] (std::string_view key) const { return dict_accessor(this->ptr(), str(key)); }
-
-inline dict_accessor dict::operator[] (const handle& key) const { return dict_accessor(this->ptr(), key); }
-
-}  // namespace pybind11
+}  // namespace pkbind

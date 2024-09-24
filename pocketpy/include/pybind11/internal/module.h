@@ -1,50 +1,63 @@
 #pragma once
-#include "cpp_function.h"
 
-namespace pybind11 {
+#include "function.h"
 
-class module_ : public object {
+namespace pkbind {
 
-public:
-    using object::object;
+class module : public object {
+    PKBIND_TYPE_IMPL(object, module, tp_module)
 
-    static module_ __main__() { return vm->_main; }
+    static module __main__() { return module(py_getmodule("__main__"), object::ref_t{}); }
 
-    static module_ import(const char* name) {
-        if(name == std::string_view{"__main__"}) {
-            return vm->_main;
-        } else {
-            return vm->py_import(name, false);
-        }
+    static module import(const char* name) {
+        raise_call<py_import>(name);
+        return borrow<module>(py_retval());
     }
 
-    module_ def_submodule(const char* name, const char* doc = nullptr) {
-        // TODO: resolve package
-        //auto package = this->package()._as<pkpy::Str>() + "." + this->name()._as<pkpy::Str>();
-        auto fname = this->name()._as<pkpy::Str>() + "." + name;
-        auto m = vm->new_module(fname, "");
+    static module create(const char* name) {
+        auto m = py_newmodule(name);
+        return steal<module>(m);
+    }
+
+    module def_submodule(const char* name, const char* doc = nullptr) {
+        // auto package = (attr("__package__").cast<std::string>() += ".") +=
+        // attr("__name__").cast<std::string_view>();
+        auto fname = (attr("__name__").cast<std::string>() += ".") += name;
+        auto m = py_newmodule(fname.c_str());
         setattr(*this, name, m);
-        return m;
+        return module(m, object::ref_t{});
     }
 
     template <typename Fn, typename... Extras>
-    module_& def(const char* name, Fn&& fn, const Extras... extras) {
-        impl::bind_function<false>(*this, name, std::forward<Fn>(fn), pkpy::BindType::DEFAULT, extras...);
+    module& def(const char* name, Fn&& fn, const Extras... extras) {
+        impl::bind_function<false, false>(*this, name, std::forward<Fn>(fn), extras...);
         return *this;
     }
 };
 
-#define PYBIND11_EMBEDDED_MODULE(name, variable)                                                                       \
-    static void _pybind11_register_##name(pybind11::module_& variable);                                                \
-    namespace pybind11::impl {                                                                                         \
-    auto _module_##name = [] {                                                                                         \
-        interpreter::register_init([] {                                                                                \
-            pybind11::module_ m = vm->new_module(#name, "");                                                           \
-            _pybind11_register_##name(m);                                                                              \
-        });                                                                                                            \
-        return 1;                                                                                                      \
-    }();                                                                                                               \
-    }                                                                                                                  \
-    static void _pybind11_register_##name(pybind11::module_& variable)
+using module_ = module;
 
-}  // namespace pybind11
+#define PYBIND11_EMBEDDED_MODULE(name, variable)                                                   \
+    static void _pkbind_register_##name(::pkbind::module& variable);                               \
+    namespace pkbind::impl {                                                                       \
+    auto _module_##name = [] {                                                                     \
+        ::pkbind::action::register_start([] {                                                      \
+            auto m = ::pkbind::module(py_newmodule(#name), ::pkbind::object::ref_t{});             \
+            _pkbind_register_##name(m);                                                            \
+        });                                                                                        \
+        return 1;                                                                                  \
+    }();                                                                                           \
+    }                                                                                              \
+    static void _pkbind_register_##name(::pkbind::module& variable)
+
+#define PYBIND11_MODULE(name, variable)                                                            \
+    static void _pkbind_register_##name(::pkbind::module& variable);                               \
+    extern "C" PK_EXPORT bool py_module_initialize() {                                             \
+        auto m = ::pkbind::module::create(#name);                                                  \
+        _pkbind_register_##name(m);                                                                \
+        py_assign(py_retval(), m.ptr());                                                           \
+        return true;                                                                               \
+    }                                                                                              \
+    static void _pkbind_register_##name(::pkbind::module& variable)
+
+}  // namespace pkbind

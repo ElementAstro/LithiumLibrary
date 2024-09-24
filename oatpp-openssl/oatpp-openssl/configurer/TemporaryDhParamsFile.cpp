@@ -37,15 +37,15 @@ void TemporaryDhParamsFile::configure(SSL_CTX *ctx) {
                                  "Call to 'BIO_new_file' failed.");
     }
 
-    std::shared_ptr<DH> dh(PEM_read_bio_DHparams(bio.get(), 0, 0, 0), DH_free);
-    if (!dh) {
+    std::shared_ptr<EVP_PKEY> pkey(PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr), EVP_PKEY_free);
+    if (!pkey) {
         throw std::runtime_error("[oatpp::openssl::configurer::TemporaryDhParamsFile::configure()]: Error. "
-                                 "Call to 'PEM_read_bio_DHparams' failed.");
+                                 "Call to 'PEM_read_bio_PrivateKey' failed.");
     }
 
-    if (SSL_CTX_set_tmp_dh(ctx, dh.get()) <= 0) {
+    if (SSL_CTX_set0_tmp_dh_pkey(ctx, pkey.get()) <= 0) {
         throw std::runtime_error("[oatpp::openssl::configurer::TemporaryDhParamsFile::configure()]: Error. "
-                                 "Call to 'SSL_CTX_set_tmp_dh' failed.");
+                                 "Call to 'SSL_CTX_set0_tmp_dh_pkey' failed.");
     }
 }
 

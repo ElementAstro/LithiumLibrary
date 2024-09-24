@@ -1,11 +1,5 @@
--xc++
-
 -Wall
 -W*
-
--std=c++17
--stdlib=libc++
-
+-xc
+-std=c11
 -Iinclude/
--I3rd/cjson/include/
--I3rd/lua_bridge/include/

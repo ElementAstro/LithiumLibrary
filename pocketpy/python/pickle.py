@@ -1,5 +1,4 @@
 import json
-from c import struct
 import builtins
 
 _BASIC_TYPES = [int, float, str, bool, type(None)]
@@ -23,7 +22,7 @@ class _Pickler:
         name = t.__name__
         mod = t.__module__
         if mod is not None:
-            name = mod.__path__ + _MOD_T_SEP + name
+            name = mod + _MOD_T_SEP + name
         return name
 
     def wrap(self, o):
@@ -142,7 +141,8 @@ class _Unpickler:
         
         # generic object
         cls = _find_class(o[0])
-        if getattr(cls, '__struct__', False):
+        # if getattr(cls, '__struct__', False):
+        if False:
             inst = cls.fromstruct(struct.fromhex(o[1]))
             self.tag(index, inst)
             return inst

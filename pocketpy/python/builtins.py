@@ -1,5 +1,3 @@
-from __builtins import next as __builtins_next
-
 def all(iterable):
     for i in iterable:
         if not i:
@@ -16,7 +14,36 @@ def enumerate(iterable, start=0):
     n = start
     for elem in iterable:
         yield n, elem
-        ++n
+        n += 1
+
+def __minmax_reduce(op, args):
+    if len(args) == 2:  # min(1, 2)
+        return args[0] if op(args[0], args[1]) else args[1]
+    if len(args) == 0:  # min()
+        raise TypeError('expected 1 arguments, got 0')
+    if len(args) == 1:  # min([1, 2, 3, 4]) -> min(1, 2, 3, 4)
+        args = args[0]
+    args = iter(args)
+    try:
+        res = next(args)
+    except StopIteration:
+        raise ValueError('args is an empty sequence')
+    while True:
+        try:
+            i = next(args)
+        except StopIteration:
+            break
+        if op(i, res):
+            res = i
+    return res
+
+def min(*args, key=None):
+    key = key or (lambda x: x)
+    return __minmax_reduce(lambda x,y: key(x)<key(y), args)
+
+def max(*args, key=None):
+    key = key or (lambda x: x)
+    return __minmax_reduce(lambda x,y: key(x)>key(y), args)
 
 def sum(iterable):
     res = 0
@@ -37,9 +64,10 @@ def zip(a, b):
     a = iter(a)
     b = iter(b)
     while True:
-        ai = __builtins_next(a)
-        bi = __builtins_next(b)
-        if ai is StopIteration or bi is StopIteration:
+        try:
+            ai = next(a)
+            bi = next(b)
+        except StopIteration:
             break
         yield ai, bi
 
@@ -170,47 +198,97 @@ del __format_string
 def help(obj):
     if hasattr(obj, '__func__'):
         obj = obj.__func__
-    print(obj.__signature__)
-    print(obj.__doc__)
+    # print(obj.__signature__)
+    if obj.__doc__:
+        print(obj.__doc__)
 
-def complex(*args, **kwargs):
+def complex(real, imag=0):
     import cmath
-    return cmath.complex(*args, **kwargs)
-
-def long(*args, **kwargs):
-    import _long
-    return _long.long(*args, **kwargs)
+    return cmath.complex(real, imag)
 
 
-# builtin exceptions
-class StackOverflowError(Exception): pass
-class IOError(Exception): pass
-class NotImplementedError(Exception): pass
-class TypeError(Exception): pass
-class IndexError(Exception): pass
-class ValueError(Exception): pass
-class RuntimeError(Exception): pass
-class ZeroDivisionError(Exception): pass
-class NameError(Exception): pass
-class UnboundLocalError(Exception): pass
-class AttributeError(Exception): pass
-class ImportError(Exception): pass
-class AssertionError(Exception): pass
+class set:
+    def __init__(self, iterable=None):
+        iterable = iterable or []
+        self._a = {}
+        self.update(iterable)
 
-class KeyError(Exception):
-    def __init__(self, key=...):
-        self.key = key
-        if key is ...:
-            super().__init__()
-        else:
-            super().__init__(repr(key))
+    def add(self, elem):
+        self._a[elem] = None
+        
+    def discard(self, elem):
+        self._a.pop(elem, None)
 
-    def __str__(self):
-        if self.key is ...:
-            return ''
-        return str(self.key)
+    def remove(self, elem):
+        del self._a[elem]
+        
+    def clear(self):
+        self._a.clear()
+
+    def update(self, other):
+        for elem in other:
+            self.add(elem)
+
+    def __len__(self):
+        return len(self._a)
+    
+    def copy(self):
+        return set(self._a.keys())
+    
+    def __and__(self, other):
+        return {elem for elem in self if elem in other}
+
+    def __sub__(self, other):
+        return {elem for elem in self if elem not in other}
+    
+    def __or__(self, other):
+        ret = self.copy()
+        ret.update(other)
+        return ret
+
+    def __xor__(self, other): 
+        _0 = self - other
+        _1 = other - self
+        return _0 | _1
+
+    def union(self, other):
+        return self | other
+
+    def intersection(self, other):
+        return self & other
+
+    def difference(self, other):
+        return self - other
+
+    def symmetric_difference(self, other):      
+        return self ^ other
+    
+    def __eq__(self, other):
+        if not isinstance(other, set):
+            return NotImplemented
+        return len(self ^ other) == 0
+    
+    def __ne__(self, other):
+        if not isinstance(other, set):
+            return NotImplemented
+        return len(self ^ other) != 0
+
+    def isdisjoint(self, other):
+        return len(self & other) == 0
+    
+    def issubset(self, other):
+        return len(self - other) == 0
+    
+    def issuperset(self, other):
+        return len(other - self) == 0
+
+    def __contains__(self, elem):
+        return elem in self._a
     
     def __repr__(self):
-        if self.key is ...:
-            return 'KeyError()'
-        return f'KeyError({self.key!r})'
+        if len(self) == 0:
+            return 'set()'
+        return '{'+ ', '.join([repr(i) for i in self._a.keys()]) + '}'
+    
+    def __iter__(self):
+        return iter(self._a.keys())

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "module.h"
-#include <vector>
+#include "type_traits.h"
 
-namespace pybind11 {
+namespace pkbind {
 
 struct dynamic_attr {};
 
@@ -17,32 +17,36 @@ public:
     using underlying_type = T;
 
     template <typename... Args>
-    class_(const handle& scope, const char* name, const Args&... args) :
-        m_scope(scope), type(type_visitor::create<T, Base>(scope, name)) {
+    class_(handle scope, const char* name, const Args&... args) :
+        type(py_newtype(name,
+                        std::is_same_v<Base, void> ? tp_object : type::of<Base>().index(),
+                        scope.ptr(),
+                        [](void* data) {
+                            static_cast<instance*>(data)->~instance();
+                        })),
+        m_scope(scope) {
+        m_type_map.try_emplace(typeid(T), this->index());
+
         auto& info = type_info::of<T>();
         info.name = name;
 
-        // bind __new__
-        interpreter::bind_func(m_ptr, pkpy::__new__, -1, [](pkpy::VM* vm, pkpy::ArgsView args) {
-            auto cls = handle(args[0])._as<pkpy::Type>();
+        py_newfunction(
+            py_tpgetmagic(this->index(), py_MagicNames::__new__),
+            "__new__(type, *args, **kwargs)",
+            [](int, py_Ref stack) {
+                auto cls = py_offset(stack, 0);
+                [[maybe_unused]] auto args = py_offset(stack, 1);
+                [[maybe_unused]] auto kwargs = py_offset(stack, 2);
 
-            // check if the class has constructor, if not, raise error
-            if(vm->find_name_in_mro(cls, pkpy::__init__) == nullptr) {
-                vm->RuntimeError("if you want to create instance of bound class, you must bind constructor for it");
-            }
-
-            auto var = instance::create(cls, &type_info::of<T>());
-
-            if constexpr(types_count_v<dynamic_attr, Args...> != 0) {
-#if PK_VERSION_MAJOR == 2
-                var.get()->_attr = new pkpy::NameDict();
-#else 
-                var->_enable_instance_dict();
-#endif
-            }
-
-            return var;
-        });
+                auto info = &type_info::of<T>();
+                int slot = ((std::is_same_v<dynamic_attr, Args> || ...) ? -1 : 0);
+                void* data =
+                    py_newobject(py_retval(), steal<type>(cls).index(), slot, sizeof(instance));
+                new (data) instance{instance::Flag::Own, operator new (info->size), info};
+                return true;
+            },
+            nullptr,
+            0);
     }
 
     /// bind constructor
@@ -51,13 +55,12 @@ public:
         if constexpr(!std::is_constructible_v<T, Args...>) {
             static_assert(std::is_constructible_v<T, Args...>, "Invalid constructor arguments");
         } else {
-            impl::bind_function<true>(
+            impl::bind_function<true, false>(
                 *this,
                 "__init__",
                 [](T* self, Args... args) {
                     new (self) T(args...);
                 },
-                pkpy::BindType::DEFAULT,
                 extra...);
             return *this;
         }
@@ -66,11 +69,10 @@ public:
     template <typename Fn, typename... Extra>
     class_& def(impl::factory<Fn> factory, const Extra&... extra) {
         using ret = callable_return_t<Fn>;
-
         if constexpr(!std::is_same_v<T, ret>) {
             static_assert(std::is_same_v<T, ret>, "Factory function must return the class type");
         } else {
-            impl::bind_function<true>(*this, "__init__", factory.make(), pkpy::BindType::DEFAULT, extra...);
+            impl::bind_function<true, false>(*this, "__init__", factory.make(), extra...);
             return *this;
         }
     }
@@ -82,10 +84,11 @@ public:
         constexpr bool is_first_base_of_v = std::is_base_of_v<first, T> || std::is_same_v<first, T>;
 
         if constexpr(!is_first_base_of_v) {
-            static_assert(is_first_base_of_v,
-                          "If you want to bind member function, the first argument must be the base class");
+            static_assert(
+                is_first_base_of_v,
+                "If you want to bind member function, the first argument must be the base class");
         } else {
-            impl::bind_function<true>(*this, name, std::forward<Fn>(f), pkpy::BindType::DEFAULT, extra...);
+            impl::bind_function<true, false>(*this, name, std::forward<Fn>(f), extra...);
         }
 
         return *this;
@@ -98,21 +101,29 @@ public:
         return *this;
     }
 
-    // TODO: factory function
-
     /// bind static function
     template <typename Fn, typename... Extra>
     class_& def_static(const char* name, Fn&& f, const Extra&... extra) {
-        impl::bind_function<false>(*this, name, std::forward<Fn>(f), pkpy::BindType::STATICMETHOD, extra...);
+        impl::bind_function<false, true>(*this, name, std::forward<Fn>(f), extra...);
         return *this;
     }
 
     template <typename MP, typename... Extras>
     class_& def_readwrite(const char* name, MP mp, const Extras&... extras) {
         if constexpr(!std::is_member_object_pointer_v<MP>) {
-            static_assert(std::is_member_object_pointer_v<MP>, "def_readwrite only supports pointer to data member");
+            static_assert(std::is_member_object_pointer_v<MP>,
+                          "def_readwrite only supports pointer to data member");
         } else {
-            impl::bind_property(*this, name, mp, mp, extras...);
+            impl::bind_property(
+                *this,
+                name,
+                [mp](class_type_t<MP>& self) -> auto& {
+                    return self.*mp;
+                },
+                [mp](class_type_t<MP>& self, const member_type_t<MP>& value) {
+                    self.*mp = value;
+                },
+                extras...);
         }
         return *this;
     }
@@ -120,16 +131,28 @@ public:
     template <typename MP, typename... Extras>
     class_& def_readonly(const char* name, MP mp, const Extras&... extras) {
         if constexpr(!std::is_member_object_pointer_v<MP>) {
-            static_assert(std::is_member_object_pointer_v<MP>, "def_readonly only supports pointer to data member");
+            static_assert(std::is_member_object_pointer_v<MP>,
+                          "def_readonly only supports pointer to data member");
         } else {
-            impl::bind_property(*this, name, mp, nullptr, extras...);
+            impl::bind_property(
+                *this,
+                name,
+                [mp](class_type_t<MP>& self) -> auto& {
+                    return self.*mp;
+                },
+                nullptr,
+                extras...);
         }
         return *this;
     }
 
     template <typename Getter, typename Setter, typename... Extras>
     class_& def_property(const char* name, Getter&& g, Setter&& s, const Extras&... extras) {
-        impl::bind_property(*this, name, std::forward<Getter>(g), std::forward<Setter>(s), extras...);
+        impl::bind_property(*this,
+                            name,
+                            std::forward<Getter>(g),
+                            std::forward<Setter>(s),
+                            extras...);
         return *this;
     }
 
@@ -166,11 +189,10 @@ public:
 
 template <typename T, typename... Others>
 class enum_ : public class_<T, Others...> {
-    std::vector<std::pair<const char*, handle>> m_values;
+    std::vector<std::pair<const char*, object>> m_values;
 
 public:
     using Base = class_<T, Others...>;
-    using class_<T, Others...>::class_;
 
     template <typename... Args>
     enum_(const handle& scope, const char* name, Args&&... args) :
@@ -190,9 +212,9 @@ public:
     }
 
     enum_& value(const char* name, T value) {
-        handle var = pybind11::cast(value, return_value_policy::copy);
+        auto var = pkbind::cast(value, return_value_policy::copy);
         setattr(*this, name, var);
-        m_values.emplace_back(name, var);
+        m_values.emplace_back(name, std::move(var));
         return *this;
     }
 
@@ -203,5 +225,5 @@ public:
         return *this;
     }
 };
-}  // namespace pybind11
 
+}  // namespace pkbind
