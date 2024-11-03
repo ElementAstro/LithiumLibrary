@@ -12,7 +12,7 @@ set(SPNG_VERSION ${SPNG_MAJOR}.${SPNG_MINOR}.${SPNG_REVISION})
 option(ENABLE_OPT "Enable architecture-specific optimizations" ON)
 option(SPNG_SHARED "Build shared lib" ON)
 option(SPNG_STATIC "Build static lib" ON)
-option(BUILD_EXAMPLES "Build examples" ON)
+option(BUILD_EXAMPLES "Build examples" OFF)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

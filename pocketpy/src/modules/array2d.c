@@ -1,7 +1,6 @@
 #include "pocketpy/pocketpy.h"
 
 #include "pocketpy/common/utils.h"
-#include "pocketpy/objects/object.h"
 #include "pocketpy/common/sstream.h"
 #include "pocketpy/interpreter/vm.h"
 
@@ -316,6 +315,25 @@ static bool array2d_tolist(int argc, py_Ref argv) {
     return true;
 }
 
+static bool array2d_render(int argc, py_Ref argv){
+    PY_CHECK_ARGC(1);
+    c11_sbuf buf;
+    c11_sbuf__ctor(&buf);
+    c11_array2d* self = py_touserdata(argv);
+    for(int j = 0; j < self->n_rows; j++) {
+        for(int i = 0; i < self->n_cols; i++) {
+            py_Ref item = py_array2d__get(self, i, j);
+            if(!py_str(item)) return false;
+            c11_sbuf__write_sv(&buf, py_tosv(py_retval()));
+        }
+        if(j < self->n_rows - 1){
+            c11_sbuf__write_char(&buf, '\n');
+        }
+    }
+    c11_sbuf__py_submit(&buf, py_retval());
+    return true;
+}
+
 static bool array2d_count(int argc, py_Ref argv) {
     // def count(self, value: T) -> int: ...
     PY_CHECK_ARGC(2);
@@ -352,7 +370,7 @@ static bool array2d_find_bounding_rect(int argc, py_Ref argv) {
     int width = right - left + 1;
     int height = bottom - top + 1;
     if(width <= 0 || height <= 0) {
-        py_newnone(py_retval());
+        return ValueError("value not found");
     } else {
         py_newtuple(py_retval(), 4);
         py_TValue* data = py_tuple_data(py_retval());
@@ -426,13 +444,30 @@ static bool array2d_count_neighbors(int argc, py_Ref argv) {
     if(slice_width <= 0 || slice_height <= 0)                                                      \
         return ValueError("slice width and height must be positive");
 
+static bool _array2d_IndexError(c11_array2d* self, int col, int row) {
+    return IndexError("(%d, %d) is not a valid index of array2d(%d, %d)",
+                      col,
+                      row,
+                      self->n_cols,
+                      self->n_rows);
+}
+
 static bool array2d__getitem__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(2);
+    c11_array2d* self = py_touserdata(argv);
+    if(argv[1].type == tp_vec2i) {
+        // fastpath for vec2i
+        c11_vec2i pos = py_tovec2i(&argv[1]);
+        if(py_array2d_is_valid(self, pos.x, pos.y)) {
+            py_assign(py_retval(), py_array2d__get(self, pos.x, pos.y));
+            return true;
+        }
+        return _array2d_IndexError(self, pos.x, pos.y);
+    }
     PY_CHECK_ARG_TYPE(1, tp_tuple);
     if(py_tuple_len(py_arg(1)) != 2) return TypeError("expected a tuple of 2 elements");
     py_Ref x = py_tuple_getitem(py_arg(1), 0);
     py_Ref y = py_tuple_getitem(py_arg(1), 1);
-    c11_array2d* self = py_touserdata(argv);
     if(py_isint(x) && py_isint(y)) {
         int col = py_toint(x);
         int row = py_toint(y);
@@ -440,11 +475,7 @@ static bool array2d__getitem__(int argc, py_Ref argv) {
             py_assign(py_retval(), py_array2d__get(self, col, row));
             return true;
         }
-        return IndexError("(%d, %d) is not a valid index of array2d(%d, %d)",
-                          col,
-                          row,
-                          self->n_cols,
-                          self->n_rows);
+        return _array2d_IndexError(self, col, row);
     } else if(py_istype(x, tp_slice) && py_istype(y, tp_slice)) {
         HANDLE_SLICE();
         c11_array2d* res = py_array2d(py_retval(), slice_width, slice_height);
@@ -461,12 +492,22 @@ static bool array2d__getitem__(int argc, py_Ref argv) {
 
 static bool array2d__setitem__(int argc, py_Ref argv) {
     PY_CHECK_ARGC(3);
+    c11_array2d* self = py_touserdata(argv);
+    py_Ref value = py_arg(2);
+    if(argv[1].type == tp_vec2i) {
+        // fastpath for vec2i
+        c11_vec2i pos = py_tovec2i(&argv[1]);
+        if(py_array2d_is_valid(self, pos.x, pos.y)) {
+            py_array2d__set(self, pos.x, pos.y, value);
+            py_newnone(py_retval());
+            return true;
+        }
+        return _array2d_IndexError(self, pos.x, pos.y);
+    }
     PY_CHECK_ARG_TYPE(1, tp_tuple);
     if(py_tuple_len(py_arg(1)) != 2) return TypeError("expected a tuple of 2 elements");
     py_Ref x = py_tuple_getitem(py_arg(1), 0);
     py_Ref y = py_tuple_getitem(py_arg(1), 1);
-    c11_array2d* self = py_touserdata(argv);
-    py_Ref value = py_arg(2);
     if(py_isint(x) && py_isint(y)) {
         int col = py_toint(x);
         int row = py_toint(y);
@@ -475,11 +516,7 @@ static bool array2d__setitem__(int argc, py_Ref argv) {
             py_newnone(py_retval());
             return true;
         }
-        return IndexError("(%d, %d) is not a valid index of array2d(%d, %d)",
-                          col,
-                          row,
-                          self->n_cols,
-                          self->n_rows);
+        return _array2d_IndexError(self, col, row);
     } else if(py_istype(x, tp_slice) && py_istype(y, tp_slice)) {
         HANDLE_SLICE();
         bool is_basic_type = false;
@@ -567,6 +604,7 @@ void pk__add_module_array2d() {
     py_bindmethod(array2d, "copy_", array2d_copy_);
 
     py_bindmethod(array2d, "tolist", array2d_tolist);
+    py_bindmethod(array2d, "render", array2d_render);
     py_bindmethod(array2d, "count", array2d_count);
     py_bindmethod(array2d, "find_bounding_rect", array2d_find_bounding_rect);
     py_bindmethod(array2d, "count_neighbors", array2d_count_neighbors);

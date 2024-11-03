@@ -28,10 +28,14 @@ typedef enum NameScope {
 
 typedef enum CodeBlockType {
     CodeBlockType_NO_BLOCK,
-    CodeBlockType_FOR_LOOP,
     CodeBlockType_WHILE_LOOP,
-    CodeBlockType_CONTEXT_MANAGER,
-    CodeBlockType_TRY_EXCEPT,
+    CodeBlockType_TRY,
+    /* context blocks (stack-based) */
+    CodeBlockType_FOR_LOOP,
+    CodeBlockType_WITH,
+    /* context blocks (flag-based) */
+    CodeBlockType_EXCEPT,
+    CodeBlockType_FINALLY,
 } CodeBlockType;
 
 typedef enum Opcode {
@@ -75,7 +79,6 @@ typedef struct CodeObject {
     int nlocals;                        // cached varnames.size()
 
     c11_smallmap_n2i varnames_inv;
-    c11_smallmap_n2i labels;
 
     c11_vector /*T=CodeBlock*/ blocks;
     c11_vector /*T=FuncDecl_*/ func_decls;

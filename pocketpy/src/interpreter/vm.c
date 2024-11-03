@@ -147,7 +147,10 @@ void VM__ctor(VM* self) {
     INJECT_BUILTIN_EXC(SystemExit, tp_BaseException);
     INJECT_BUILTIN_EXC(KeyboardInterrupt, tp_BaseException);
 
-    INJECT_BUILTIN_EXC(StopIteration, tp_Exception);
+    // INJECT_BUILTIN_EXC(StopIteration, tp_Exception);
+    validate(tp_StopIteration, pk_StopIteration__register());
+    py_setdict(&self->builtins, py_name("StopIteration"), py_tpobject(tp_StopIteration));
+    
     INJECT_BUILTIN_EXC(SyntaxError, tp_Exception);
     INJECT_BUILTIN_EXC(StackOverflowError, tp_Exception);
     INJECT_BUILTIN_EXC(IOError, tp_Exception);
@@ -201,7 +204,6 @@ void VM__ctor(VM* self) {
     pk__add_module_array2d();
 
     // add modules
-    pk__add_module_pkpy();
     pk__add_module_os();
     pk__add_module_sys();
     pk__add_module_math();
@@ -213,6 +215,9 @@ void VM__ctor(VM* self) {
     pk__add_module_easing();
     pk__add_module_traceback();
     pk__add_module_enum();
+
+    // add win32 module
+    pk__add_module_win32();
 
     // add python builtins
     do {

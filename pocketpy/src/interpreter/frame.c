@@ -1,7 +1,7 @@
 #include "pocketpy/interpreter/frame.h"
 #include "pocketpy/interpreter/vm.h"
+#include "pocketpy/objects/base.h"
 #include "pocketpy/objects/codeobject.h"
-#include "pocketpy/objects/object.h"
 #include "pocketpy/pocketpy.h"
 #include <stdbool.h>
 
@@ -70,48 +70,13 @@ int Frame__prepare_jump_exception_handler(Frame* self, ValueStack* _s) {
     int iblock = Frame__iblock(self);
     while(iblock >= 0) {
         CodeBlock* block = c11__at(CodeBlock, &self->co->blocks, iblock);
-        if(block->type == CodeBlockType_TRY_EXCEPT) break;
+        if(block->type == CodeBlockType_TRY) break;
         iblock = block->parent;
     }
     if(iblock < 0) return -1;
     UnwindTarget* uw = Frame__find_unwind_target(self, iblock);
     _s->sp = (self->locals + uw->offset);  // unwind the stack
     return c11__at(CodeBlock, &self->co->blocks, iblock)->end;
-}
-
-void Frame__prepare_jump_break(Frame* self, ValueStack* _s, int target) {
-    int iblock = Frame__iblock(self);
-    if(target >= self->co->codes.length) {
-        while(iblock >= 0)
-            iblock = Frame__exit_block(self, _s, iblock);
-    } else {
-        // BUG (solved)
-        // for i in range(4):
-        //     _ = 0
-        // # if there is no op here, the block check will fail
-        // while i: --i
-        int next_block = c11__at(BytecodeEx, &self->co->codes_ex, target)->iblock;
-        while(iblock >= 0 && iblock != next_block)
-            iblock = Frame__exit_block(self, _s, iblock);
-        assert(iblock == next_block);
-    }
-}
-
-int Frame__prepare_loop_break(Frame* self, ValueStack* _s) {
-    int iblock = Frame__iblock(self);
-    int target = c11__getitem(CodeBlock, &self->co->blocks, iblock).end;
-    Frame__prepare_jump_break(self, _s, target);
-    return target;
-}
-
-int Frame__exit_block(Frame* self, ValueStack* _s, int iblock) {
-    CodeBlock* block = c11__at(CodeBlock, &self->co->blocks, iblock);
-    if(block->type == CodeBlockType_FOR_LOOP) {
-        _s->sp--;  // pop iterator
-    } else if(block->type == CodeBlockType_CONTEXT_MANAGER) {
-        _s->sp--;  // pop context variable
-    }
-    return block->parent;
 }
 
 UnwindTarget* Frame__find_unwind_target(Frame* self, int iblock) {

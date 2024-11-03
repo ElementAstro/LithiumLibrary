@@ -2,7 +2,6 @@
 #include "pocketpy/common/utils.h"
 #include "pocketpy/interpreter/frame.h"
 #include "pocketpy/interpreter/vm.h"
-#include "pocketpy/common/memorypool.h"
 #include "pocketpy/common/sstream.h"
 #include "pocketpy/objects/codeobject.h"
 #include "pocketpy/pocketpy.h"
@@ -11,6 +10,9 @@
 
 static bool stack_unpack_sequence(VM* self, uint16_t arg);
 static bool stack_format_object(VM* self, c11_sv spec);
+
+#define CHECK_RETURN_FROM_EXCEPT_OR_FINALLY()                                                      \
+    if(self->is_curr_exc_handled) py_clearexc(NULL)
 
 #define DISPATCH()                                                                                 \
     do {                                                                                           \
@@ -89,7 +91,6 @@ FrameResult VM__run_top_frame(VM* self) {
 
 #ifndef NDEBUG
         pk_print_stack(self, frame, byte);
-        // assert(!py_checkexc(true));
 #endif
 
         switch((Opcode)byte.op) {
@@ -615,29 +616,13 @@ FrameResult VM__run_top_frame(VM* self) {
                     DISPATCH();
                 }
             }
-            case OP_LOOP_CONTINUE:
-                // just an alias of OP_JUMP_FORWARD
+            case OP_LOOP_CONTINUE: {
                 DISPATCH_JUMP((int16_t)byte.arg);
+            }
             case OP_LOOP_BREAK: {
-                int target = Frame__ip(frame) + byte.arg;
-                Frame__prepare_jump_break(frame, &self->stack, target);
                 DISPATCH_JUMP((int16_t)byte.arg);
             }
-            case OP_JUMP_ABSOLUTE_TOP: {
-                int target = py_toint(TOP());
-                POP();
-                DISPATCH_JUMP_ABSOLUTE(target);
-            }
-            case OP_GOTO: {
-                int target = c11_smallmap_n2i__get(&frame->co->labels, byte.arg, -1);
-                if(target < 0) {
-                    RuntimeError("label '%n' not found", byte.arg);
-                    goto __ERROR;
-                }
-                Frame__prepare_jump_break(frame, &self->stack, target);
-                DISPATCH_JUMP_ABSOLUTE(target);
-            }
-                /*****************************************/
+            /*****************************************/
             case OP_CALL: {
                 ManagedHeap__collect_if_needed(&self->heap);
                 vectorcall_opcall(byte.arg & 0xFF, byte.arg >> 8);
@@ -699,6 +684,7 @@ FrameResult VM__run_top_frame(VM* self) {
                 DISPATCH();
             }
             case OP_RETURN_VALUE: {
+                CHECK_RETURN_FROM_EXCEPT_OR_FINALLY();
                 if(byte.arg == BC_NOARG) {
                     self->last_retval = POPX();
                 } else {
@@ -715,9 +701,28 @@ FrameResult VM__run_top_frame(VM* self) {
                 DISPATCH();
             }
             case OP_YIELD_VALUE: {
-                py_assign(py_retval(), TOP());
-                POP();
+                CHECK_RETURN_FROM_EXCEPT_OR_FINALLY();
+                if(byte.arg == 1) {
+                    py_newnone(py_retval());
+                } else {
+                    py_assign(py_retval(), TOP());
+                    POP();
+                }
                 return RES_YIELD;
+            }
+            case OP_FOR_ITER_YIELD_VALUE: {
+                CHECK_RETURN_FROM_EXCEPT_OR_FINALLY();
+                int res = py_next(TOP());
+                if(res == -1) goto __ERROR;
+                if(res) {
+                    return RES_YIELD;
+                } else {
+                    assert(self->last_retval.type == tp_StopIteration);
+                    py_ObjectRef value = py_getslot(&self->last_retval, 0);
+                    if(py_isnil(value)) value = py_None();
+                    *TOP() = *value;  // [iter] -> [retval]
+                    DISPATCH_JUMP((int16_t)byte.arg);
+                }
             }
             /////////
             case OP_LIST_APPEND: {
@@ -781,8 +786,9 @@ FrameResult VM__run_top_frame(VM* self) {
                     PUSH(py_retval());
                     DISPATCH();
                 } else {
-                    int target = Frame__prepare_loop_break(frame, &self->stack);
-                    DISPATCH_JUMP_ABSOLUTE(target);
+                    assert(self->last_retval.type == tp_StopIteration);
+                    POP();  // [iter] -> []
+                    DISPATCH_JUMP((int16_t)byte.arg);
                 }
             }
             ////////
@@ -983,8 +989,11 @@ FrameResult VM__run_top_frame(VM* self) {
                 goto __ERROR;
             }
             case OP_RE_RAISE: {
-                assert(self->curr_exception.type);
-                goto __ERROR_RE_RAISE;
+                if(self->curr_exception.type) {
+                    assert(!self->is_curr_exc_handled);
+                    goto __ERROR_RE_RAISE;
+                }
+                DISPATCH();
             }
             case OP_PUSH_EXCEPTION: {
                 assert(self->curr_exception.type);
@@ -992,12 +1001,34 @@ FrameResult VM__run_top_frame(VM* self) {
                 DISPATCH();
             }
             case OP_BEGIN_EXC_HANDLING: {
+                assert(self->curr_exception.type);
                 self->is_curr_exc_handled = true;
                 DISPATCH();
             }
             case OP_END_EXC_HANDLING: {
                 assert(self->curr_exception.type);
                 py_clearexc(NULL);
+                DISPATCH();
+            }
+            case OP_BEGIN_FINALLY: {
+                if(self->curr_exception.type) {
+                    assert(!self->is_curr_exc_handled);
+                    // temporarily handle the exception if any
+                    self->is_curr_exc_handled = true;
+                }
+                DISPATCH();
+            }
+            case OP_END_FINALLY: {
+                if(byte.arg == BC_NOARG) {
+                    if(self->curr_exception.type) {
+                        assert(self->is_curr_exc_handled);
+                        // revert the exception handling if needed
+                        self->is_curr_exc_handled = false;
+                    }
+                } else {
+                    // break or continue inside finally block
+                    py_clearexc(NULL);
+                }
                 DISPATCH();
             }
             //////////////////
@@ -1040,6 +1071,33 @@ FrameResult VM__run_top_frame(VM* self) {
     return RES_RETURN;
 }
 
+const char* pk_op2str(py_Name op) {
+    switch(op) {
+        case __eq__: return "==";
+        case __ne__: return "!=";
+        case __lt__: return "<";
+        case __le__: return "<=";
+        case __gt__: return ">";
+        case __ge__: return ">=";
+        case __add__: return "+";
+        case __sub__: return "-";
+        case __mul__: return "*";
+        case __truediv__: return "/";
+        case __floordiv__: return "//";
+        case __mod__: return "%";
+        case __pow__: return "**";
+        case __lshift__: return "<<";
+        case __rshift__: return ">>";
+        case __and__: return "&";
+        case __or__: return "|";
+        case __xor__: return "^";
+        case __neg__: return "-";
+        case __invert__: return "~";
+        case __matmul__: return "@";
+        default: return py_name2str(op);
+    }
+}
+
 bool pk_stack_binaryop(VM* self, py_Name op, py_Name rop) {
     // [a, b]
     py_Ref magic = py_tpfindmagic(SECOND()->type, op);
@@ -1071,7 +1129,7 @@ bool pk_stack_binaryop(VM* self, py_Name op, py_Name rop) {
         py_newbool(py_retval(), !res);
         return true;
     }
-    return TypeError("unsupported operand type(s) for '%n'", op);
+    return TypeError("unsupported operand type(s) for '%s'", pk_op2str(op));
 }
 
 bool py_binaryop(py_Ref lhs, py_Ref rhs, py_Name op, py_Name rop) {

@@ -160,11 +160,6 @@ __SUCCESS:
 
 //////////////////////////
 
-static bool builtins_repr(int argc, py_Ref argv) {
-    PY_CHECK_ARGC(1);
-    return py_repr(argv);
-}
-
 static bool builtins_exit(int argc, py_Ref argv) {
     int code = 0;
     if(argc > 1) return TypeError("exit() takes at most 1 argument");
@@ -179,6 +174,32 @@ static bool builtins_exit(int argc, py_Ref argv) {
     // bool ok = py_tpcall(tp_SystemExit, 1, &sso_code);
     // if(!ok) return false;
     // return py_raise(py_retval());
+}
+
+static bool builtins_input(int argc, py_Ref argv) {
+    if(argc > 1) return TypeError("input() takes at most 1 argument");
+    const char* prompt = "";
+    if(argc == 1) {
+        if(!py_checkstr(argv)) return false;
+        prompt = py_tostr(argv);
+    }
+    printf("%s", prompt);
+
+    c11_sbuf buf;
+    c11_sbuf__ctor(&buf);
+    while(true) {
+        int c = getchar();
+        if(c == '\n') break;
+        if(c == EOF) break;
+        c11_sbuf__write_char(&buf, c);
+    }
+    c11_sbuf__py_submit(&buf, py_retval());
+    return true;
+}
+
+static bool builtins_repr(int argc, py_Ref argv) {
+    PY_CHECK_ARGC(1);
+    return py_repr(argv);
 }
 
 static bool builtins_len(int argc, py_Ref argv) {
@@ -222,11 +243,17 @@ static bool builtins_iter(int argc, py_Ref argv) {
 }
 
 static bool builtins_next(int argc, py_Ref argv) {
-    PY_CHECK_ARGC(1);
+    if(argc == 0 || argc > 2) return TypeError("next() takes 1 or 2 arguments");
     int res = py_next(argv);
     if(res == -1) return false;
     if(res) return true;
-    return py_exception(tp_StopIteration, "");
+    if(argc == 1) {
+        // StopIteration stored in py_retval()
+        return py_raise(py_retval());
+    } else {
+        py_assign(py_retval(), py_arg(1));
+        return true;
+    }
 }
 
 static bool builtins_hash(int argc, py_Ref argv) {
@@ -414,10 +441,15 @@ static bool builtins_ord(int argc, py_Ref argv) {
     PY_CHECK_ARGC(1);
     PY_CHECK_ARG_TYPE(0, tp_str);
     c11_sv sv = py_tosv(py_arg(0));
-    if(sv.size != 1) {
-        return TypeError("ord() expected a character, but string of length %d found", sv.size);
+    if(c11_sv__u8_length(sv) != 1) {
+        return TypeError("ord() expected a character, but string of length %d found", c11_sv__u8_length(sv));
     }
-    py_newint(py_retval(), sv.data[0]);
+    int u8bytes = c11__u8_header(sv.data[0], true);
+    if (u8bytes == 0) {
+        return ValueError("invalid char: %c", sv.data[0]);
+    }
+    int value = c11__u8_value(u8bytes, sv.data);
+    py_newint(py_retval(), value);
     return true;
 }
 
@@ -640,8 +672,9 @@ static bool NotImplementedType__repr__(int argc, py_Ref argv) {
 
 py_TValue pk_builtins__register() {
     py_Ref builtins = py_newmodule("builtins");
-    py_bindfunc(builtins, "repr", builtins_repr);
     py_bindfunc(builtins, "exit", builtins_exit);
+    py_bindfunc(builtins, "input", builtins_input);
+    py_bindfunc(builtins, "repr", builtins_repr);
     py_bindfunc(builtins, "len", builtins_len);
     py_bindfunc(builtins, "hex", builtins_hex);
     py_bindfunc(builtins, "iter", builtins_iter);

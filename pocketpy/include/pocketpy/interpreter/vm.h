@@ -59,6 +59,8 @@ py_TypeInfo* pk__type_info(py_Type type);
 bool pk_wrapper__self(int argc, py_Ref argv);
 bool pk_wrapper__NotImplementedError(int argc, py_Ref argv);
 
+const char* pk_op2str(py_Name op);
+
 typedef enum FrameResult {
     RES_ERROR = 0,
     RES_RETURN = 1,
@@ -115,6 +117,7 @@ py_Type pk_range__register();
 py_Type pk_range_iterator__register();
 py_Type pk_BaseException__register();
 py_Type pk_Exception__register();
+py_Type pk_StopIteration__register();
 py_Type pk_super__register();
 py_Type pk_property__register();
 py_Type pk_staticmethod__register();

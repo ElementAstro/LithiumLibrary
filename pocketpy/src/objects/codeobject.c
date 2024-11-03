@@ -11,7 +11,9 @@ void Bytecode__set_signed_arg(Bytecode* self, int arg) {
 }
 
 bool Bytecode__is_forward_jump(const Bytecode* self) {
-    return self->op >= OP_JUMP_FORWARD && self->op <= OP_LOOP_BREAK;
+    Opcode op = self->op;
+    return (op >= OP_JUMP_FORWARD && op <= OP_LOOP_BREAK) ||
+           (op == OP_FOR_ITER || op == OP_FOR_ITER_YIELD_VALUE);
 }
 
 static void FuncDecl__dtor(FuncDecl* self) {
@@ -125,7 +127,6 @@ void CodeObject__ctor(CodeObject* self, SourceData_ src, c11_sv name) {
     self->nlocals = 0;
 
     c11_smallmap_n2i__ctor(&self->varnames_inv);
-    c11_smallmap_n2i__ctor(&self->labels);
 
     c11_vector__ctor(&self->blocks, sizeof(CodeBlock));
     c11_vector__ctor(&self->func_decls, sizeof(FuncDecl_));
@@ -148,7 +149,6 @@ void CodeObject__dtor(CodeObject* self) {
     c11_vector__dtor(&self->varnames);
 
     c11_smallmap_n2i__dtor(&self->varnames_inv);
-    c11_smallmap_n2i__dtor(&self->labels);
 
     c11_vector__dtor(&self->blocks);
 
@@ -179,7 +179,8 @@ int CodeObject__add_varname(CodeObject* self, py_Name name) {
 }
 
 void Function__dtor(Function* self) {
-    // printf("%s() in %s freed!\n", self->decl->code.name->data, self->decl->code.src->filename->data);
+    // printf("%s() in %s freed!\n", self->decl->code.name->data,
+    // self->decl->code.src->filename->data);
     PK_DECREF(self->decl);
     if(self->closure) NameDict__delete(self->closure);
 }

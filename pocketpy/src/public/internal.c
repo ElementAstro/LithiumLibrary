@@ -1,13 +1,9 @@
 #include "pocketpy/interpreter/typeinfo.h"
 #include "pocketpy/objects/codeobject.h"
-#include "pocketpy/objects/sourcedata.h"
 #include "pocketpy/pocketpy.h"
 
 #include "pocketpy/common/utils.h"
-#include "pocketpy/common/sstream.h"
-#include "pocketpy/objects/object.h"
 #include "pocketpy/interpreter/vm.h"
-#include "pocketpy/compiler/compiler.h"
 
 VM* pk_current_vm;
 
@@ -17,7 +13,8 @@ static py_TValue _True, _False, _None, _NIL;
 
 void py_initialize() {
     if(pk_current_vm){
-        c11__abort("py_initialize() can only be called once!");
+        // c11__abort("py_initialize() can only be called once!");
+        return;
     }
 
     MemoryPools__initialize();
@@ -42,10 +39,14 @@ void py_finalize() {
     for(int i = 1; i < 16; i++) {
         VM* vm = pk_all_vm[i];
         if(vm) {
+            // temp fix https://github.com/pocketpy/pocketpy/issues/315
+            // TODO: refactor VM__ctor and VM__dtor
+            pk_current_vm = vm;
             VM__dtor(vm);
             free(vm);
         }
     }
+    pk_current_vm = &pk_default_vm;
     VM__dtor(&pk_default_vm);
     pk_current_vm = NULL;
     py_Name__finalize();
@@ -55,10 +56,12 @@ void py_finalize() {
 void py_switchvm(int index) {
     if(index < 0 || index >= 16) c11__abort("invalid vm index");
     if(!pk_all_vm[index]) {
-        pk_all_vm[index] = malloc(sizeof(VM));
+        pk_current_vm = pk_all_vm[index] = malloc(sizeof(VM));
+        memset(pk_current_vm, 0, sizeof(VM));
         VM__ctor(pk_all_vm[index]);
+    }else{
+        pk_current_vm = pk_all_vm[index];
     }
-    pk_current_vm = pk_all_vm[index];
 }
 
 void py_resetvm() {
@@ -255,4 +258,8 @@ bool pk_callmagic(py_Name name, int argc, py_Ref argv) {
     return py_call(tmp, argc, argv);
 }
 
-bool StopIteration() { return py_exception(tp_StopIteration, ""); }
+bool StopIteration() {
+    bool ok = py_tpcall(tp_StopIteration, 0, NULL);
+    if(!ok) return false;
+    return py_raise(py_retval());
+}
