@@ -14,6 +14,9 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 LIST(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/")
 LIST(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake_modules/")
 
+# Add pocketpy include directory
+include_directories(${CMAKE_SOURCE_DIR}/pocketpy/include)
+
 function(add_subdirectories_recursively start_dir)
   file(GLOB entries "${start_dir}/*")
   foreach(entry ${entries})
@@ -24,6 +27,3 @@ function(add_subdirectories_recursively start_dir)
   endforeach()
 endfunction()
 add_subdirectories_recursively(${CMAKE_CURRENT_SOURCE_DIR})
-
-# Add pocketpy include directory
-include_directories(${CMAKE_SOURCE_DIR}/pocketpy/include)
