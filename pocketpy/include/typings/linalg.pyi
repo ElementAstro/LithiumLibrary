@@ -1,4 +1,4 @@
-from typing import overload
+from typing import overload, Iterator
 
 class _vecF[T]:
     ONE: T
@@ -17,6 +17,9 @@ class _vecF[T]:
     def length_squared(self) -> float: ...
     def normalize(self) -> T: ...
 
+    # dummy iter for unpacking
+    def __iter__(self) -> Iterator[float]: ...
+
 class _vecI[T]:
     ONE: T
     ZERO: T
@@ -28,10 +31,20 @@ class _vecI[T]:
     @overload
     def __mul__(self, other: T) -> T: ...
 
+    def __hash__(self) -> int: ...
+
     def dot(self, other: T) -> int: ...
+
+    # dummy iter for unpacking
+    def __iter__(self) -> Iterator[int]: ...
 
 
 class vec2(_vecF['vec2']):
+    LEFT: vec2
+    RIGHT: vec2
+    UP: vec2
+    DOWN: vec2
+
     @property
     def x(self) -> float: ...
     @property
@@ -41,7 +54,10 @@ class vec2(_vecF['vec2']):
     def with_y(self, y: float) -> vec2: ...
     def with_z(self, z: float) -> vec3: ...
 
+    @overload
     def __init__(self, x: float, y: float) -> None: ...
+    @overload
+    def __init__(self, xy: vec2i) -> None: ...
 
     def rotate(self, radians: float) -> vec2: ...
 
@@ -105,6 +121,11 @@ class mat3x3:
 
 
 class vec2i(_vecI['vec2i']):
+    LEFT: vec2i
+    RIGHT: vec2i
+    UP: vec2i
+    DOWN: vec2i
+
     @property
     def x(self) -> int: ...
     @property
@@ -147,7 +168,10 @@ class vec3(_vecF['vec3']):
     def with_z(self, z: float) -> vec3: ...
     def with_xy(self, xy: vec2) -> vec3: ...
 
+    @overload
     def __init__(self, x: float, y: float, z: float) -> None: ...
+    @overload
+    def __init__(self, xyz: vec3i) -> None: ...
 
 
 

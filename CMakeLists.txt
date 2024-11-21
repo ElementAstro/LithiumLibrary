@@ -24,3 +24,6 @@ function(add_subdirectories_recursively start_dir)
   endforeach()
 endfunction()
 add_subdirectories_recursively(${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add pocketpy include directory
+include_directories(${CMAKE_SOURCE_DIR}/pocketpy/include)

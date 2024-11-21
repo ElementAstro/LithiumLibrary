@@ -14,4 +14,5 @@ void pk__add_module_enum();
 void pk__add_module_linalg();
 void pk__add_module_array2d();
 
-void pk__add_module_win32();
+void pk__add_module_conio();
+void pk__add_module_pkpy();
