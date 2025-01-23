@@ -12,10 +12,6 @@ All of the C++ libraries used by Lithium.
 | libzippp        | [https://github.com/ctabin/libzippp](https://github.com/ctabin/libzippp)             |      |
 | loguru          | [https://github.com/emilk/loguru](https://github.com/emilk/loguru)                   |      |
 | nlohmann json   | [https://github.com/nlohmann/json](https://github.com/nlohmann/json)                 |      |
-| oatpp           | [https://github.com/oatpp/oatpp](https://github.com/oatpp/oatpp)                     |      |
-| oatpp-openssl   | [https://github.com/oatpp/oatpp-openssl](https://github.com/oatpp/oatpp-openssl)     |      |
-| oatpp-swagger   | [https://github.com/oatpp/oatpp-swagger](https://github.com/oatpp/oatpp-swagger)     |      |
-| oatpp-websocket | [https://github.com/oatpp/oatpp-websocket](https://github.com/oatpp/oatpp-websocket) |      |
-| oatpp-zlib      | [https://github.com/oatpp/oatpp-zlib](https://github.com/oatpp/oatpp-zlib)           |      |
 | pocketpy        | [https://github.com/pocketpy/pocketpy](https://github.com/pocketpy/pocketpy)         |      |
+| pybind11        | [Https://github.com/pybind11/pybind11](https://github.com/pybind11/pybind11)         |      |
 | tinyxml2        | [https://github.com/leethomason/tinyxml2](https://github.com/leethomason/tinyxml2)   |      |
